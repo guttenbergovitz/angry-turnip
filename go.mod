@@ -1,8 +1,8 @@
 module github.com/guttenbergovitz/vigil-cli
 
-go 1.24.0
+go 1.27.0
 
-toolchain go1.24.11
+toolchain go1.27.4
 
 require (
 	github.com/charmbracelet/bubbles v0.18.0

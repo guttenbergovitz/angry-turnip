@@ -222,6 +222,14 @@ func (m *Model) SetError(err string) {
 	m.progress.Error = err
 }
 
+// switchToTab changes active tab and resets view state.
+func (m *Model) switchToTab(tab ActiveTab) {
+	m.activeTab = tab
+	m.selectedIdx = 0
+	m.vulnTable.SetCursor(0)
+	m.applyFilters()
+}
+
 // Init initializes the model.
 func (m *Model) Init() tea.Cmd {
 	return ticker()
@@ -355,30 +363,15 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "q":
 			return m, tea.Quit
 		case "1":
-			m.activeTab = TabVulnerabilities
-			m.selectedIdx = 0
-			m.vulnTable.SetCursor(0)
-			m.applyFilters()
+			m.switchToTab(TabVulnerabilities)
 		case "2":
-			m.activeTab = TabSecrets
-			m.selectedIdx = 0
-			m.vulnTable.SetCursor(0)
-			m.applyFilters()
+			m.switchToTab(TabSecrets)
 		case "3":
-			m.activeTab = TabIaC
-			m.selectedIdx = 0
-			m.vulnTable.SetCursor(0)
-			m.applyFilters()
+			m.switchToTab(TabIaC)
 		case "4":
-			m.activeTab = TabLicenses
-			m.selectedIdx = 0
-			m.vulnTable.SetCursor(0)
-			m.applyFilters()
+			m.switchToTab(TabLicenses)
 		case "5":
-			m.activeTab = TabDependencyGraph
-			m.selectedIdx = 0
-			m.vulnTable.SetCursor(0)
-			m.applyFilters()
+			m.switchToTab(TabDependencyGraph)
 		case "g":
 			m.groupMode = (m.groupMode + 1) % 3
 			m.applyFilters()

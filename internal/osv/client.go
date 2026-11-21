@@ -13,6 +13,32 @@ import (
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
 
+// getFloat64FromMap safely extracts float64 value from map, returns 0 if key missing or wrong type.
+func getFloat64FromMap(m map[string]any, key string) float64 {
+	val, ok := m[key]
+	if !ok {
+		return 0
+	}
+	f, ok := val.(float64)
+	if !ok {
+		return 0
+	}
+	return f
+}
+
+// getStringFromMap safely extracts string value from map, returns "" if key missing or wrong type.
+func getStringFromMap(m map[string]any, key string) string {
+	val, ok := m[key]
+	if !ok {
+		return ""
+	}
+	s, ok := val.(string)
+	if !ok {
+		return ""
+	}
+	return s
+}
+
 // Client provides access to OSV API.
 type Client struct {
 	endpoint string
@@ -155,22 +181,14 @@ func (c *Client) QueryWithEcosystem(pkg, version string, ecosystem types.Ecosyst
 		
 		// If still no CVSS, try to extract from database_specific
 		if cvssScore == 0 && v.DatabaseSpecific != nil {
-			if dbSpec, ok := v.DatabaseSpecific.(map[string]interface{}); ok {
-				// Try common CVSS fields in database_specific
-				if cvssVal, ok := dbSpec["cvss_score"]; ok {
-					if score, ok := cvssVal.(float64); ok {
-						cvssScore = score
-					}
+			if dbSpec, ok := v.DatabaseSpecific.(map[string]any); ok {
+				if score := getFloat64FromMap(dbSpec, "cvss_score"); score > 0 {
+					cvssScore = score
+				} else if score := getFloat64FromMap(dbSpec, "cvss3_score"); score > 0 {
+					cvssScore = score
 				}
-				if cvssVal, ok := dbSpec["cvss3_score"]; ok {
-					if score, ok := cvssVal.(float64); ok {
-						cvssScore = score
-					}
-				}
-				if vectorVal, ok := dbSpec["cvss_vector"]; ok {
-					if vec, ok := vectorVal.(string); ok {
-						cvssVector = vec
-					}
+				if vec := getStringFromMap(dbSpec, "cvss_vector"); vec != "" {
+					cvssVector = vec
 				}
 			}
 		}

@@ -1,5 +1,5 @@
 # Multi-stage build for minimal image size
-FROM golang:1.24-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 # Build arguments for version injection
 ARG VERSION=dev

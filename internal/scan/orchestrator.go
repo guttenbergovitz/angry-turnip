@@ -50,124 +50,88 @@ func Scan(ctx context.Context, absPath, lockFile string, lockType lockfile.LockF
 
 	var graph *types.DependencyGraph
 
-	// All lock types now use graph parsers for proper dependency chains
+	// parseLockFile handles parse error reporting pattern
+	parseLockFile := func(fileName string, parseErr error) error {
+		if parseErr == nil {
+			return nil
+		}
+		errMsg := fmt.Sprintf("Failed to parse %s: %v", fileName, parseErr)
+		if reporter != nil {
+			reporter.Error(errMsg)
+		}
+		return fmt.Errorf("failed to parse %s: %w", fileName, parseErr)
+	}
+
+	// Parse lock file based on type
 	switch lockType {
 	case lockfile.PnpmLock:
 		graph, err = lockfile.ParsePnpmLockGraph(lockf)
-		if err != nil {
-			errMsg := fmt.Sprintf("Failed to parse pnpm-lock.yaml: %v", err)
-			if reporter != nil {
-				reporter.Error(errMsg)
-			}
-			return nil, fmt.Errorf("failed to parse pnpm-lock.yaml: %w", err)
+		if err = parseLockFile("pnpm-lock.yaml", err); err != nil {
+			return nil, err
 		}
 	case lockfile.NPMLock:
 		graph, err = lockfile.ParseNPMLockGraph(lockf)
-		if err != nil {
-			errMsg := fmt.Sprintf("Failed to parse package-lock.json: %v", err)
-			if reporter != nil {
-				reporter.Error(errMsg)
-			}
-			return nil, fmt.Errorf("failed to parse package-lock.json: %w", err)
+		if err = parseLockFile("package-lock.json", err); err != nil {
+			return nil, err
 		}
 	case lockfile.YarnLock:
 		graph, err = lockfile.ParseYarnLockGraph(lockf)
-		if err != nil {
-			errMsg := fmt.Sprintf("Failed to parse yarn.lock: %v", err)
-			if reporter != nil {
-				reporter.Error(errMsg)
-			}
-			return nil, fmt.Errorf("failed to parse yarn.lock: %w", err)
+		if err = parseLockFile("yarn.lock", err); err != nil {
+			return nil, err
 		}
 	case lockfile.UVLock:
 		graph, err = lockfile.ParseUVLockGraph(lockf)
-		if err != nil {
-			errMsg := fmt.Sprintf("Failed to parse uv.lock: %v", err)
-			if reporter != nil {
-				reporter.Error(errMsg)
-			}
-			return nil, fmt.Errorf("failed to parse uv.lock: %w", err)
+		if err = parseLockFile("uv.lock", err); err != nil {
+			return nil, err
 		}
 	case lockfile.PoetryLock:
 		var deps *lockfile.Dependencies
 		deps, err = lockfile.ParsePoetryLock(lockf)
-		if err != nil {
-			errMsg := fmt.Sprintf("Failed to parse poetry.lock: %v", err)
-			if reporter != nil {
-				reporter.Error(errMsg)
-			}
-			return nil, fmt.Errorf("failed to parse poetry.lock: %w", err)
+		if err = parseLockFile("poetry.lock", err); err != nil {
+			return nil, err
 		}
 		graph = buildGraphFromDeps(deps, lockType.Ecosystem())
 	case lockfile.PipfileLock:
 		var deps *lockfile.Dependencies
 		deps, err = lockfile.ParsePipfileLock(lockf)
-		if err != nil {
-			errMsg := fmt.Sprintf("Failed to parse Pipfile.lock: %v", err)
-			if reporter != nil {
-				reporter.Error(errMsg)
-			}
-			return nil, fmt.Errorf("failed to parse Pipfile.lock: %w", err)
+		if err = parseLockFile("Pipfile.lock", err); err != nil {
+			return nil, err
 		}
 		graph = buildGraphFromDeps(deps, lockType.Ecosystem())
 	case lockfile.RequirementsTxt:
 		var deps *lockfile.Dependencies
 		deps, err = lockfile.ParseRequirementsTxt(lockf)
-		if err != nil {
-			errMsg := fmt.Sprintf("Failed to parse requirements.txt: %v", err)
-			if reporter != nil {
-				reporter.Error(errMsg)
-			}
-			return nil, fmt.Errorf("failed to parse requirements.txt: %w", err)
+		if err = parseLockFile("requirements.txt", err); err != nil {
+			return nil, err
 		}
 		graph = buildGraphFromDeps(deps, lockType.Ecosystem())
 	case lockfile.CargoLock:
 		graph, err = lockfile.ParseCargoLockGraph(lockf)
-		if err != nil {
-			errMsg := fmt.Sprintf("Failed to parse Cargo.lock: %v", err)
-			if reporter != nil {
-				reporter.Error(errMsg)
-			}
-			return nil, fmt.Errorf("failed to parse Cargo.lock: %w", err)
+		if err = parseLockFile("Cargo.lock", err); err != nil {
+			return nil, err
 		}
 	case lockfile.ComposerLock:
 		graph, err = lockfile.ParseComposerLockGraph(lockf)
-		if err != nil {
-			errMsg := fmt.Sprintf("Failed to parse composer.lock: %v", err)
-			if reporter != nil {
-				reporter.Error(errMsg)
-			}
-			return nil, fmt.Errorf("failed to parse composer.lock: %w", err)
+		if err = parseLockFile("composer.lock", err); err != nil {
+			return nil, err
 		}
 	case lockfile.GoModLock:
 		graph, err = lockfile.ParseGoModGraph(lockf)
-		if err != nil {
-			errMsg := fmt.Sprintf("Failed to parse go.mod: %v", err)
-			if reporter != nil {
-				reporter.Error(errMsg)
-			}
-			return nil, fmt.Errorf("failed to parse go.mod: %w", err)
+		if err = parseLockFile("go.mod", err); err != nil {
+			return nil, err
 		}
 	case lockfile.PomXml:
 		var deps *lockfile.Dependencies
 		deps, err = lockfile.ParsePomXml(lockf)
-		if err != nil {
-			errMsg := fmt.Sprintf("Failed to parse pom.xml: %v", err)
-			if reporter != nil {
-				reporter.Error(errMsg)
-			}
-			return nil, fmt.Errorf("failed to parse pom.xml: %w", err)
+		if err = parseLockFile("pom.xml", err); err != nil {
+			return nil, err
 		}
 		graph = buildGraphFromDeps(deps, lockType.Ecosystem())
 	case lockfile.GradleLock:
 		var deps *lockfile.Dependencies
 		deps, err = lockfile.ParseGradleLockfile(lockf)
-		if err != nil {
-			errMsg := fmt.Sprintf("Failed to parse gradle.lockfile: %v", err)
-			if reporter != nil {
-				reporter.Error(errMsg)
-			}
-			return nil, fmt.Errorf("failed to parse gradle.lockfile: %w", err)
+		if err = parseLockFile("gradle.lockfile", err); err != nil {
+			return nil, err
 		}
 		graph = buildGraphFromDeps(deps, lockType.Ecosystem())
 	default:
