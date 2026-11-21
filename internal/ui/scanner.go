@@ -30,6 +30,7 @@ const (
 	StateScanning ViewState = iota
 	StateExplorer
 	StateExportModal
+	StateHelp
 )
 
 // TickMsg triggers periodic UI updates during scan.
@@ -100,6 +101,7 @@ type Model struct {
 	tableTargetColWidth int
 	tableIDColWidth     int
 	activityLogs        []string
+	cancelFunc          func() // Cancel scan context on early quit
 	mu                  sync.Mutex
 }
 
@@ -220,6 +222,11 @@ func (m *Model) SetError(err string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.progress.Error = err
+}
+
+// SetCancelFunc sets context cancel function for early quit.
+func (m *Model) SetCancelFunc(cancel func()) {
+	m.cancelFunc = cancel
 }
 
 // switchToTab changes active tab and resets view state.
@@ -352,9 +359,22 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Help Modal input handler
+	if m.state == StateHelp {
+		switch key {
+		case "esc", "q", "?":
+			m.state = StateExplorer
+		}
+		return m, nil
+	}
+
 	switch m.state {
 	case StateScanning:
 		if key == "q" {
+			// Cancel scan context to stop goroutine
+			if m.cancelFunc != nil {
+				m.cancelFunc()
+			}
 			return m, tea.Quit
 		}
 
@@ -377,19 +397,21 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.applyFilters()
 		case "e":
 			m.state = StateExportModal
+		case "?":
+			m.state = StateHelp
 		case "/":
 			m.isSearching = true
 			m.searchQuery = ""
-		case "c":
+		case "C":
 			m.filterSeverity = "critical"
 			m.applyFilters()
-		case "h":
+		case "H":
 			m.filterSeverity = "high"
 			m.applyFilters()
-		case "m":
+		case "M":
 			m.filterSeverity = "medium"
 			m.applyFilters()
-		case "l":
+		case "L":
 			m.filterSeverity = "low"
 			m.applyFilters()
 		case "y":
@@ -426,8 +448,13 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filterSeverity = ""
 			m.searchQuery = ""
 			m.applyFilters()
-		case "tab":
+		case "tab", "l":
+			// tab or l (vim right) = next pane
 			m.activePane = (m.activePane + 1) % 4
+			m.updateSelectedPaneContents()
+		case "h":
+			// h (vim left) = previous pane
+			m.activePane = (m.activePane + 3) % 4 // -1 mod 4 = 3
 			m.updateSelectedPaneContents()
 		case "w":
 			m.isMaximized = !m.isMaximized
@@ -875,6 +902,8 @@ func (m *Model) View() string {
 		return m.renderLazygitExplorer()
 	case StateExportModal:
 		return m.renderExportModal()
+	case StateHelp:
+		return m.renderHelp()
 	default:
 		return m.renderScanning()
 	}
@@ -1082,15 +1111,15 @@ func (m *Model) renderLazygitExplorer() string {
 
 	// Build context-aware status bar
 	statusParts := []string{
-		"[↑/↓] Navigate",
+		"[↑/↓/h/l] Navigate",
 		"[Enter] Details",
 		"[y] Copy",
 		"[x/X] Mark Fixed",
 		"[1-5] Tab",
-		"[c/h/m/l] Filter",
+		"[C/H/M/L] Filter",
 		"[/] Search",
 		"[e] Export",
-		"[a] Clear",
+		"[?] Help",
 		"[q] Quit",
 	}
 	footer := m.styles.StatusBar.Render(strings.Join(statusParts, " | "))
@@ -1109,6 +1138,41 @@ func (m *Model) renderExportModal() string {
 	b.WriteString("  [4] CycloneDX v1.5 SBOM (.cyclonedx.json)\n")
 	b.WriteString("  [5] SPDX v2.3 SBOM (.spdx.json)\n\n")
 	b.WriteString(m.styles.Subtitle.Render("Press [1-5] to export, or [Esc] to cancel"))
+
+	return m.styles.ModalBox.Render(b.String())
+}
+
+func (m *Model) renderHelp() string {
+	var b strings.Builder
+	b.WriteString(m.styles.Title.Render("󰋗 VIGIL KEYBOARD SHORTCUTS") + "\n\n")
+
+	b.WriteString(m.styles.Subtitle.Render("Navigation:") + "\n")
+	b.WriteString("  j/k or ↓/↑       Move down/up in table\n")
+	b.WriteString("  h/l              Switch pane left/right (vim style)\n")
+	b.WriteString("  Tab              Cycle through panes\n")
+	b.WriteString("  Enter            Expand/collapse detail view\n\n")
+
+	b.WriteString(m.styles.Subtitle.Render("Tabs:") + "\n")
+	b.WriteString("  1-5              Switch between tabs (Vulns/Secrets/IaC/Licenses/Graph)\n\n")
+
+	b.WriteString(m.styles.Subtitle.Render("Filtering:") + "\n")
+	b.WriteString("  C/H/M/L          Filter by Critical/High/Medium/Low severity\n")
+	b.WriteString("  a or Esc         Clear all filters\n")
+	b.WriteString("  /                Search (type to filter, Enter to exit)\n\n")
+
+	b.WriteString(m.styles.Subtitle.Render("Actions:") + "\n")
+	b.WriteString("  y                Copy CVE ID to clipboard\n")
+	b.WriteString("  x/X              Mark/unmark item as fixed (hide from view)\n")
+	b.WriteString("  g                Cycle grouping mode (None/Package/Severity)\n")
+	b.WriteString("  e                Export report dialog\n")
+	b.WriteString("  w                Maximize/restore window\n\n")
+
+	b.WriteString(m.styles.Subtitle.Render("Other:") + "\n")
+	b.WriteString("  ?                Show this help\n")
+	b.WriteString("  q                Quit\n")
+	b.WriteString("  Ctrl+C           Force quit\n\n")
+
+	b.WriteString(m.styles.Subtitle.Render("Press [?], [q], or [Esc] to close"))
 
 	return m.styles.ModalBox.Render(b.String())
 }

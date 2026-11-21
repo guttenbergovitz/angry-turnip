@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-21
+
+### Fixed
+
+- **Fix hjkl vim navigation conflict**
+  - Added `h` (vim left) for previous pane navigation
+  - Added `l` (vim right) for next pane navigation
+  - No conflict with filter shortcuts: C/H/M/L use capitals, h/l use lowercase
+- **Fix quit hang during scan**
+  - Check context cancellation after TUI exits
+  - Wait for scan goroutine to finish before exit
+  - Clean shutdown when user presses `q` during scan
+- **Add help command**
+  - Press `?` to show keyboard shortcuts modal
+  - Organized by category: Navigation, Tabs, Filtering, Actions, Other
+  - Close with `?`, `q`, or `Esc`
+
 ## [1.5.4] - 2026-07-27
 
 ### Fixed

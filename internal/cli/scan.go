@@ -114,6 +114,10 @@ func Scan(args []string) error {
 	errorChan := make(chan error, 1)
 	var wg sync.WaitGroup
 
+	// Create context with timeout for scan
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
 	var program *tea.Program
 	var finalModel tea.Model
 	var reporter scan.ProgressReporter
@@ -121,6 +125,7 @@ func Scan(args []string) error {
 	if !*noTUI {
 		// Create Bubbletea model for progress display with alt screen
 		model := ui.NewModel()
+		model.SetCancelFunc(cancel) // Allow early quit to cancel scan
 		program = tea.NewProgram(model, tea.WithAltScreen())
 		reporter = &TUIAdapter{program: program}
 	} else {
@@ -129,10 +134,6 @@ func Scan(args []string) error {
 		fmt.Println("Scanning...")
 		// We could implement a StdoutReporter here if needed
 	}
-
-	// Create context with timeout for scan
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
 
 	// Start scanning in goroutine
 	wg.Add(1)
@@ -153,6 +154,12 @@ func Scan(args []string) error {
 		if err != nil {
 			return fmt.Errorf("TUI error: %w", err)
 		}
+	}
+
+	// If context canceled (user quit), wait for scan to finish and exit early
+	if ctx.Err() != nil {
+		wg.Wait() // Wait for scan goroutine to exit
+		return nil
 	}
 
 	// Wait for scan to complete with timeout
