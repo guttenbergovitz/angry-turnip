@@ -69,6 +69,7 @@ type Model struct {
 	activePane      ActivePane
 	state           ViewState
 	isMaximized     bool
+	isDetailExpanded bool // true = show detail pane below table
 	progress        ScanProgress
 	startTime       time.Time
 	result          *types.ScanResult
@@ -78,6 +79,7 @@ type Model struct {
 	iacIssues       []container.SecurityIssue
 	licenseFindings []license.LicenseFinding
 	filteredItems   []TUIFinding
+	markedFixed     map[string]bool // CVE/ID -> marked as fixed
 	spinner         spinner.Model
 	progressBar     progress.Model
 	vulnTable       table.Model
@@ -97,6 +99,7 @@ type Model struct {
 	tableReasonColWidth int
 	tableTargetColWidth int
 	tableIDColWidth     int
+	activityLogs        []string
 	mu                  sync.Mutex
 }
 
@@ -160,20 +163,22 @@ func NewModel() *Model {
 	dVP := viewport.New(50, 10)
 
 	m := &Model{
-		activeTab:      TabVulnerabilities,
-		activePane:     PaneTable,
-		state:          StateScanning,
-		startTime:      time.Now(),
-		spinner:        s,
-		progressBar:    p,
-		vulnTable:      t,
-		reasonVP:       rVP,
-		chainVP:        cVP,
-		detailVP:       dVP,
-		styles:         DefaultStyles(),
-		width:          140,
-		height:         40,
-		filterSeverity: "critical,high", // Smart default: show Critical+High only
+		activeTab:        TabVulnerabilities,
+		activePane:       PaneTable,
+		state:            StateScanning,
+		startTime:        time.Now(),
+		markedFixed:      make(map[string]bool),
+		spinner:          s,
+		progressBar:      p,
+		vulnTable:        t,
+		reasonVP:         rVP,
+		chainVP:          cVP,
+		detailVP:         dVP,
+		styles:           DefaultStyles(),
+		width:            140,
+		height:           40,
+		filterSeverity:   "critical,high", // Smart default: show Critical+High only
+		isDetailExpanded: false,
 	}
 	m.recalculateViewports()
 	return m
@@ -242,12 +247,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ProgressMsg:
 		m.mu.Lock()
 		m.progress = msg.Progress
+		if msg.Progress.CurrentPkg != "" && msg.Progress.CurrentPkg != "Starting scan..." {
+			timestamp := time.Now().Format("15:04:05")
+			logLine := fmt.Sprintf("  • [%s] ⚡ Scanned %s (%d/%d)", timestamp, msg.Progress.CurrentPkg, msg.Progress.Current, msg.Progress.Total)
+			m.activityLogs = append(m.activityLogs, logLine)
+			if len(m.activityLogs) > 6 {
+				m.activityLogs = m.activityLogs[len(m.activityLogs)-6:]
+			}
+		}
 		m.mu.Unlock()
 		m.updateTableLayout()
 		return m, ticker()
 	case VulnMsg:
 		m.mu.Lock()
 		m.vulns = append(m.vulns, msg.Entry)
+		timestamp := time.Now().Format("15:04:05")
+		sevUpper := strings.ToUpper(msg.Entry.Severity)
+		logLine := fmt.Sprintf("  • [%s] ⚠ VULNERABILITY DETECTED in %s (%s - %s)", timestamp, msg.Entry.Package, sevUpper, msg.Entry.CVE)
+		m.activityLogs = append(m.activityLogs, logLine)
+		if len(m.activityLogs) > 6 {
+			m.activityLogs = m.activityLogs[len(m.activityLogs)-6:]
+		}
 		m.mu.Unlock()
 		m.applyFilters()
 		return m, ticker()
@@ -384,14 +404,40 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.selectedIdx >= 0 && m.selectedIdx < len(m.filteredItems) {
 				cveID := m.filteredItems[m.selectedIdx].ID
 				if copyToClipboard(cveID) == nil {
-					// Flash feedback in status (would need status field)
-					_ = cveID // Success
+					m.exportStatus = "✓ Copied " + cveID + " to clipboard"
+				} else {
+					m.exportStatus = "✗ Failed to copy to clipboard"
 				}
 			}
+		case "x":
+			// Mark as fixed (hide from view)
+			if m.selectedIdx >= 0 && m.selectedIdx < len(m.filteredItems) {
+				itemID := m.filteredItems[m.selectedIdx].ID
+				m.markedFixed[itemID] = true
+				m.exportStatus = "✓ Marked " + itemID + " as fixed"
+				m.applyFilters()
+			}
+		case "X":
+			// Unmark fixed (show again)
+			if m.selectedIdx >= 0 && m.selectedIdx < len(m.filteredItems) {
+				itemID := m.filteredItems[m.selectedIdx].ID
+				delete(m.markedFixed, itemID)
+				m.exportStatus = "✓ Unmarked " + itemID
+				m.applyFilters()
+			}
+		case "enter":
+			// Toggle detail expansion
+			m.isDetailExpanded = !m.isDetailExpanded
+			m.recalculateViewports()
 		case "a", "esc":
 			m.filterSeverity = ""
 			m.searchQuery = ""
 			m.applyFilters()
+		case "tab":
+			m.activePane = (m.activePane + 1) % 4
+			m.updateSelectedPaneContents()
+		case "w":
+			m.isMaximized = !m.isMaximized
 		case "up", "k":
 			if m.activePane == PaneTable {
 				var cmd tea.Cmd
@@ -443,13 +489,21 @@ func (m *Model) applyFiltersLocked() {
 			if v.CVEID != "" {
 				cveID = v.CVEID
 			}
-			reason := fmt.Sprintf("A vulnerability affects %s (%s). The issue is tracked upstream as %s with CVSS score %.1f. Specially crafted payloads or triggers may result in security compromise.", v.Package, v.Version, cveID, v.CVSS)
+			pkgDisplay := v.Package
+			chainPrefix := ""
+			if len(v.DependencyPath) > 1 {
+				rootDep := v.DependencyPath[0]
+				pkgDisplay = fmt.Sprintf("%s (via %s)", v.Package, rootDep)
+				chainPrefix = fmt.Sprintf("[Chain: %s] ", strings.Join(v.DependencyPath, " -> "))
+			}
+
+			reason := fmt.Sprintf("%sA vulnerability affects %s (%s). The issue is tracked upstream as %s with CVSS score %.1f.", chainPrefix, v.Package, v.Version, cveID, v.CVSS)
 			if v.CVEDescription != "" {
-				reason = v.CVEDescription
+				reason = chainPrefix + v.CVEDescription
 			}
 			items = append(items, TUIFinding{
 				Domain:         "SCA",
-				Package:        v.Package,
+				Package:        pkgDisplay,
 				Version:        v.Version,
 				ID:             cveID,
 				Severity:       v.Severity,
@@ -546,7 +600,11 @@ func (m *Model) applyFiltersLocked() {
 	}
 
 	for _, item := range items {
-		if m.filterSeverity != "" && !allowedSeverities[strings.ToLower(item.Severity)] {
+		// Skip marked as fixed
+		if m.markedFixed[item.ID] {
+			continue
+		}
+		if m.activeTab == TabVulnerabilities && m.filterSeverity != "" && !allowedSeverities[strings.ToLower(item.Severity)] {
 			continue
 		}
 		if search != "" {
@@ -601,21 +659,8 @@ func (m *Model) recalculateViewports() {
 		wChain = m.width - 2
 	}
 
-	// Calculate rich 5-column table widths spanning full width across the top (subtracting 18 for outer box border & 5-column cell padding)
-	tableInnerWidth := availWidth - 18
-	if tableInnerWidth < 30 {
-		tableInnerWidth = 30
-	}
-	domainColWidth := 10
-	sevColWidth := 12
-	remWidth := tableInnerWidth - domainColWidth - sevColWidth
-	targetColWidth := int(float64(remWidth) * 0.25)
-	idColWidth := int(float64(remWidth) * 0.25)
-	reasonColWidth := remWidth - targetColWidth - idColWidth
-	if reasonColWidth < 10 {
-		reasonColWidth = 10
-	}
-
+	// Calculate rich 5-column table widths
+	domainColWidth, sevColWidth, targetColWidth, idColWidth, reasonColWidth := calculateColumnWidths(availWidth)
 	m.tableTargetColWidth = targetColWidth
 	m.tableIDColWidth = idColWidth
 	m.tableReasonColWidth = reasonColWidth
@@ -642,6 +687,25 @@ func (m *Model) recalculateViewports() {
 
 	m.updateTableLayout()
 	m.updateSelectedPaneContents()
+}
+
+// calculateColumnWidths computes 5-column table widths from available width.
+func calculateColumnWidths(availWidth int) (domain, severity, target, id, reason int) {
+	// Subtract 18 for outer box border & 5-column cell padding
+	tableInnerWidth := availWidth - 18
+	if tableInnerWidth < 30 {
+		tableInnerWidth = 30
+	}
+	domain = 10
+	severity = 12
+	remWidth := tableInnerWidth - domain - severity
+	target = int(float64(remWidth) * 0.25)
+	id = int(float64(remWidth) * 0.25)
+	reason = remWidth - target - id
+	if reason < 10 {
+		reason = 10
+	}
+	return
 }
 
 func (m *Model) updateTableLayout() {
@@ -838,20 +902,8 @@ func (m *Model) renderScanning() string {
 		availWidth = 20
 	}
 
-	// Calculate dynamic table column widths for scanning view (subtracting 18 for outer box border & 5-column cell padding)
-	scanTableInnerWidth := availWidth - 18
-	if scanTableInnerWidth < 30 {
-		scanTableInnerWidth = 30
-	}
-	domainColWidth := 10
-	sevColWidth := 12
-	remWidth := scanTableInnerWidth - domainColWidth - sevColWidth
-	targetColWidth := int(float64(remWidth) * 0.25)
-	idColWidth := int(float64(remWidth) * 0.25)
-	reasonColWidth := remWidth - targetColWidth - idColWidth
-	if reasonColWidth < 10 {
-		reasonColWidth = 10
-	}
+	// Calculate dynamic table column widths for scanning view
+	domainColWidth, sevColWidth, targetColWidth, idColWidth, reasonColWidth := calculateColumnWidths(availWidth)
 	m.tableTargetColWidth = targetColWidth
 	m.tableIDColWidth = idColWidth
 	m.tableReasonColWidth = reasonColWidth
@@ -867,23 +919,30 @@ func (m *Model) renderScanning() string {
 	m.vulnTable.SetHeight(bodyHeight - 8)
 
 	var scanBody []string
+	scanBody = append(scanBody, m.styles.Title.Render("⚡ Active Phase: [1/4] Dependency Vulnerability Analysis (10 Parallel Workers)"))
+
 	if m.progress.Total > 0 {
 		percent := float64(m.progress.Current) / float64(m.progress.Total)
 		if percent > 1.0 {
 			percent = 1.0
 		}
-		barWidth := 30
+		barWidth := 34
 		filled := int(percent * float64(barWidth))
 		bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
-		scanBody = append(scanBody, fmt.Sprintf("[%s] %d%% (%d/%d packages)", bar, int(percent*100), m.progress.Current, m.progress.Total))
+		scanBody = append(scanBody, fmt.Sprintf("Progress: [%s] %d%% (%d/%d packages)", bar, int(percent*100), m.progress.Current, m.progress.Total))
 	}
 
 	if m.progress.CurrentPkg != "" {
-		scanBody = append(scanBody, fmt.Sprintf("Scanning Target: %s", m.styles.Subtitle.Render(m.progress.CurrentPkg)))
+		scanBody = append(scanBody, fmt.Sprintf("Current Target: %s", m.styles.Subtitle.Render(m.progress.CurrentPkg)))
 	}
 
 	elapsed := time.Since(m.startTime).Seconds()
 	scanBody = append(scanBody, fmt.Sprintf("󰥔 Elapsed: %.0fs | Found Vulnerabilities: %d", elapsed, len(m.vulns)))
+
+	if len(m.activityLogs) > 0 {
+		scanBody = append(scanBody, "", m.styles.Title.Render("󱇤 Real-Time Activity Log:"))
+		scanBody = append(scanBody, m.activityLogs...)
+	}
 
 	if len(m.vulns) > 0 {
 		scanBody = append(scanBody, "", m.styles.Title.Render("󰍜 Live Vulnerabilities Stream:"), m.vulnTable.View())
@@ -927,78 +986,100 @@ func (m *Model) renderLazygitExplorer() string {
 	tabsRow := lipgloss.JoinHorizontal(lipgloss.Top, renderedTabs...)
 	sections = append(sections, tabsRow)
 
-	// 3. Filter & Search Bar
-	filterStr := "ALL"
-	if m.filterSeverity != "" {
-		filterStr = strings.ToUpper(m.filterSeverity)
-	}
-	groupStr := "FLAT"
-	if m.groupMode == GroupPackage {
-		groupStr = "BY PACKAGE"
-	} else if m.groupMode == GroupSeverity {
-		groupStr = "BY SEVERITY"
+	// 3. Filter & Search Bar with Visual Badges
+	var filterBadges []string
+
+	// Severity badges (show which are active)
+	severities := []struct {
+		name  string
+		key   string
+		color lipgloss.Color
+	}{
+		{"CRIT", "critical", lipgloss.Color("#FF5555")},
+		{"HIGH", "high", lipgloss.Color("#FFB86C")},
+		{"MED", "medium", lipgloss.Color("#F1FA8C")},
+		{"LOW", "low", lipgloss.Color("#8BE9FD")},
 	}
 
-	searchStr := "none"
+	activeSevs := make(map[string]bool)
+	if m.filterSeverity != "" {
+		for _, sev := range strings.Split(m.filterSeverity, ",") {
+			activeSevs[strings.TrimSpace(strings.ToLower(sev))] = true
+		}
+	}
+
+	for _, sev := range severities {
+		if len(activeSevs) == 0 || activeSevs[sev.key] {
+			badge := lipgloss.NewStyle().Foreground(sev.color).Bold(true).Render("●" + sev.name)
+			filterBadges = append(filterBadges, badge)
+		} else {
+			badge := lipgloss.NewStyle().Foreground(lipgloss.Color("#44475A")).Render("○" + sev.name)
+			filterBadges = append(filterBadges, badge)
+		}
+	}
+
+	searchStr := ""
 	if m.searchQuery != "" {
-		searchStr = fmt.Sprintf("%q", m.searchQuery)
+		searchStr = fmt.Sprintf(" | Search: %q", m.searchQuery)
 	}
 	if m.isSearching {
-		searchStr = fmt.Sprintf("%q █", m.searchQuery)
+		searchStr = fmt.Sprintf(" | Search: %q █", m.searchQuery)
 	}
 
-	filterBar := fmt.Sprintf("Group: [%s] | Filter: [%s] | Search: %s | Active Pane: [%d] | Maximize: [%v]",
-		m.styles.KeyHint.Render(groupStr),
-		m.styles.KeyHint.Render(filterStr),
-		m.styles.SearchPrompt.Render(searchStr),
-		m.activePane+1,
-		m.isMaximized,
+	markedCount := len(m.markedFixed)
+	markedStr := ""
+	if markedCount > 0 {
+		markedStr = fmt.Sprintf(" | Hidden: %d", markedCount)
+	}
+
+	filterBar := fmt.Sprintf("%s%s%s | Findings: %d",
+		strings.Join(filterBadges, " "),
+		searchStr,
+		markedStr,
+		len(m.filteredItems),
 	)
 	sections = append(sections, m.styles.FilterBar.Render(filterBar))
 
-	// 4. Multi-Pane Lazygit / btm Grid Layout
+	// 4. Single-Pane Layout (optional detail expansion)
 	bodyHeight := m.height - 4
 	if bodyHeight < 8 {
 		bodyHeight = 8
 	}
-
-	topHeight := bodyHeight / 2
-	bottomHeight := bodyHeight - topHeight
 
 	availWidth := m.width - 2
 	if availWidth < 30 {
 		availWidth = 30
 	}
 
-	wReason := int(float64(availWidth) * 0.25)
-	wDetail := int(float64(availWidth) * 0.50)
-	wChain := availWidth - wReason - wDetail
+	if m.isDetailExpanded {
+		// Show table + detail pane
+		tableHeight := bodyHeight / 2
+		detailHeight := bodyHeight - tableHeight
 
-	if m.isMaximized {
-		var activePaneBox string
-		switch m.activePane {
-		case PaneTable:
-			activePaneBox = RenderPaneBorder("󰍜 [1] Security Findings Table (Maximized)", m.vulnTable.View(), m.width-2, bodyHeight, true)
-		case PaneReason:
-			activePaneBox = RenderPaneBorder("💡 [2] Reason Why Flagged (Maximized)", m.reasonVP.View(), m.width-2, bodyHeight, true)
-		case PaneDetails:
-			activePaneBox = RenderPaneBorder("󰈔 [3] Detailed Inspection (Maximized)", m.detailVP.View(), m.width-2, bodyHeight, true)
-		case PaneChain:
-			activePaneBox = RenderPaneBorder("󰒍 [4] Dependency Tree Path (Maximized)", m.chainVP.View(), m.width-2, bodyHeight, true)
+		tableBox := RenderPaneBorder("󰍜 Security Findings", m.vulnTable.View(), availWidth, tableHeight, true)
+
+		// Combined detail view
+		var detailBuf strings.Builder
+		if m.selectedIdx >= 0 && m.selectedIdx < len(m.filteredItems) {
+			item := m.filteredItems[m.selectedIdx]
+			detailBuf.WriteString(fmt.Sprintf("Package: %s@%s | %s | CVSS: %.1f\n", item.Package, item.Version, RenderSeverityBadge(item.Severity, m.styles), item.CVSS))
+			detailBuf.WriteString(strings.Repeat("─", availWidth-6) + "\n\n")
+			detailBuf.WriteString("Reason: " + item.ReasonFlagged + "\n\n")
+			if len(item.DependencyPath) > 0 {
+				detailBuf.WriteString("Chain: " + strings.Join(item.DependencyPath, " → ") + "\n\n")
+			}
+			detailBuf.WriteString("Description: " + item.Description + "\n\n")
+			detailBuf.WriteString("Fix: " + item.Remediation)
+		} else {
+			detailBuf.WriteString("No item selected")
 		}
-		sections = append(sections, activePaneBox)
+
+		detailBox := RenderPaneBorder("󰈔 Details (Enter to collapse)", detailBuf.String(), availWidth, detailHeight, false)
+		sections = append(sections, lipgloss.JoinVertical(lipgloss.Left, tableBox, detailBox))
 	} else {
-		// Top Full-Width Table Pane
-		topRow := RenderPaneBorder("󰍜 [1] Security Findings Table", m.vulnTable.View(), availWidth, topHeight, m.activePane == PaneTable)
-
-		// Bottom 3-Column Panes (25% Reason, 50% Details, 25% Chain Graph)
-		pReason := RenderPaneBorder("💡 [2] Reason Why Flagged", m.reasonVP.View(), wReason, bottomHeight, m.activePane == PaneReason)
-		pDetail := RenderPaneBorder("󰈔 [3] Detailed Inspection", m.detailVP.View(), wDetail, bottomHeight, m.activePane == PaneDetails)
-		pChain := RenderPaneBorder("󰒍 [4] Dependency Tree Path", m.chainVP.View(), wChain, bottomHeight, m.activePane == PaneChain)
-		bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, pReason, pDetail, pChain)
-
-		grid := lipgloss.JoinVertical(lipgloss.Left, topRow, bottomRow)
-		sections = append(sections, grid)
+		// Show table only (full height)
+		tableBox := RenderPaneBorder("󰍜 Security Findings (Enter to expand details)", m.vulnTable.View(), availWidth, bodyHeight, true)
+		sections = append(sections, tableBox)
 	}
 
 	// 5. Status / Footer Bar
@@ -1009,11 +1090,12 @@ func (m *Model) renderLazygitExplorer() string {
 	// Build context-aware status bar
 	statusParts := []string{
 		"[↑/↓] Navigate",
-		"[y] Copy CVE",
+		"[Enter] Details",
+		"[y] Copy",
+		"[x/X] Mark Fixed",
 		"[1-5] Tab",
 		"[c/h/m/l] Filter",
 		"[/] Search",
-		"[g] Group",
 		"[e] Export",
 		"[a] Clear",
 		"[q] Quit",

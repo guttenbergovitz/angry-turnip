@@ -69,9 +69,10 @@ func ParseNPMLock(r io.Reader) (*Dependencies, error) {
 func ParseNPMLockGraph(r io.Reader) (*types.DependencyGraph, error) {
 	var lock struct {
 		Packages map[string]struct {
-			Version      string            `json:"version"`
-			Dev          bool              `json:"dev"`
-			Dependencies map[string]string `json:"dependencies"`
+			Version         string            `json:"version"`
+			Dev             bool              `json:"dev"`
+			Dependencies    map[string]string `json:"dependencies"`
+			DevDependencies map[string]string `json:"devDependencies"`
 		} `json:"packages"`
 	}
 
@@ -80,6 +81,7 @@ func ParseNPMLockGraph(r io.Reader) (*types.DependencyGraph, error) {
 	}
 
 	graph := types.NewDependencyGraph()
+	pkgPathToNodeKey := make(map[string]string)
 
 	// Extract package name from node_modules path
 	extractName := func(pkgPath string) string {
@@ -114,7 +116,38 @@ func ParseNPMLockGraph(r io.Reader) (*types.DependencyGraph, error) {
 			typ = types.Development
 		}
 
-		graph.AddNode(name, pkg.Version, typ, false)
+		node := graph.AddNode(name, pkg.Version, typ, false)
+		pkgPathToNodeKey[pkgPath] = node.Name + "@" + node.Version
+	}
+
+	// Helper to resolve child package key using node_modules hierarchy
+	findChildKey := func(parentPath, childName string) string {
+		curr := parentPath
+		for {
+			candidatePath := "node_modules/" + childName
+			if curr != "" {
+				candidatePath = curr + "/node_modules/" + childName
+			}
+			if key, ok := pkgPathToNodeKey[candidatePath]; ok {
+				return key
+			}
+			if curr == "" {
+				break
+			}
+			idx := strings.LastIndex(curr, "/node_modules/")
+			if idx >= 0 {
+				curr = curr[:idx]
+			} else {
+				curr = ""
+			}
+		}
+		// Fallback: search by package name in graph
+		for key, node := range graph.Nodes {
+			if node.Name == childName {
+				return key
+			}
+		}
+		return ""
 	}
 
 	// Second pass: add edges from dependencies field
@@ -123,66 +156,56 @@ func ParseNPMLockGraph(r io.Reader) (*types.DependencyGraph, error) {
 			continue
 		}
 
-		var parentName string
-		var parentVersion string
-
-		if pkgPath == "" {
-			// Root package - skip as parent
+		parentKey, ok := pkgPathToNodeKey[pkgPath]
+		if !ok {
 			continue
 		}
 
-		parentName = extractName(pkgPath)
-		parentVersion = pkg.Version
-
-		if parentName == "" || parentVersion == "" {
-			continue
-		}
-
-		parentKey := parentName + "@" + parentVersion
-
-		// Add edges to children
-		for childName, childVersion := range pkg.Dependencies {
-			childKey := childName + "@" + childVersion
-			graph.AddEdge(parentKey, childKey)
+		for childName := range pkg.Dependencies {
+			childKey := findChildKey(pkgPath, childName)
+			if childKey != "" {
+				graph.AddEdge(parentKey, childKey)
+			}
 		}
 	}
 
-	// Third pass: identify roots from root package
+	// Third pass: identify roots from root package (packages[""])
 	if rootPkg, ok := lock.Packages[""]; ok {
-		// Root dependencies are in packages[""].dependencies
-		// But we need to find their actual installed versions in the graph
-		var rootDeps, rootDevDeps map[string]string
+		for childName := range rootPkg.Dependencies {
+			childKey := findChildKey("", childName)
+			if childKey != "" {
+				if node, exists := graph.Nodes[childKey]; exists {
+					node.Direct = true
+					graph.Root = append(graph.Root, childKey)
+				}
+			}
+		}
+		for childName := range rootPkg.DevDependencies {
+			childKey := findChildKey("", childName)
+			if childKey != "" {
+				if node, exists := graph.Nodes[childKey]; exists {
+					node.Direct = true
+					node.Type = types.Development
+					graph.Root = append(graph.Root, childKey)
+				}
+			}
+		}
+	}
 
-		// In npm lock v2+, root dependencies are stored differently
-		// We need to re-parse to get the root deps
-		// For now, mark packages as root if they're referenced by root
-		for childName, childVersion := range rootPkg.Dependencies {
-			key := childName + "@" + childVersion
-			if node, ok := graph.Nodes[key]; ok {
-				node.Direct = true
-				graph.Root = append(graph.Root, key)
+	// Fallback for roots if none detected
+	if len(graph.Root) == 0 {
+		childNodes := make(map[string]bool)
+		for _, node := range graph.Nodes {
+			for _, child := range node.Children {
+				childNodes[child] = true
 			}
 		}
 
-		// Mark dev deps (need to re-read root package structure)
-		_ = rootDeps
-		_ = rootDevDeps
-	}
-
-	// Alternative: mark nodes as root if they're not children of any other node
-	// This is a fallback for when we can't extract root deps cleanly
-	childNodes := make(map[string]bool)
-	for _, node := range graph.Nodes {
-		for _, child := range node.Children {
-			childNodes[child] = true
-		}
-	}
-
-	for key, node := range graph.Nodes {
-		if !childNodes[key] && !node.Direct {
-			// This node is not a child of anything, likely a root
-			node.Direct = true
-			graph.Root = append(graph.Root, key)
+		for key, node := range graph.Nodes {
+			if !childNodes[key] && !node.Direct {
+				node.Direct = true
+				graph.Root = append(graph.Root, key)
+			}
 		}
 	}
 

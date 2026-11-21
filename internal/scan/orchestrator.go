@@ -218,17 +218,29 @@ func Scan(ctx context.Context, absPath, lockFile string, lockType lockfile.LockF
 		reporter.Progress(0, nodesToScan, "Starting scan...", 0)
 	}
 
+	var totalVulns atomic.Int32
+	var scanned atomic.Int32
+	var resultMu sync.Mutex
+
 	// Parallel scanning with worker pool
-	const numWorkers = 10
+	numWorkers := getWorkerCount()
 	pool := NewWorkerPool(ctx, numWorkers, func(ctx context.Context, node *types.DependencyNode, nodeKey string) ([]types.Vulnerability, error) {
+		// Send live progress update when worker begins inspecting package
+		if reporter != nil {
+			reporter.Progress(int(scanned.Load()), nodesToScan, nodeKey, int(totalVulns.Load()))
+		}
+
 		// Query OSV API for this package
 		vulns, err := osvClient.QueryWithEcosystem(node.Name, node.Version, graph.Ecosystem)
 		if err != nil {
 			return nil, err
 		}
 
-		// Fetch package release date for temporal filtering
-		releasedAt, _ := npmClient.GetReleaseDate(node.Name, node.Version)
+		// Fetch package release date for temporal filtering ONLY if vulnerabilities exist and ecosystem is NPM
+		var releasedAt *time.Time
+		if len(vulns) > 0 && graph.Ecosystem == types.EcosystemNPM {
+			releasedAt, _ = npmClient.GetReleaseDate(node.Name, node.Version)
+		}
 
 		// Process vulnerabilities
 		for j := range vulns {
@@ -244,8 +256,8 @@ func Scan(ctx context.Context, absPath, lockFile string, lockType lockfile.LockF
 			// Try multiple sources for CVSS score (priority: NVD > GitHub > OSV > derived from severity)
 			originalCVSS := vulns[j].CVSSScore
 
-			// 1. Try NVD API for CVE-* IDs
-			if vulns[j].CVEID != "" && strings.HasPrefix(vulns[j].CVEID, "CVE-") {
+			// 1. Try NVD API for CVE-* IDs (only when NVD_API_KEY is set to avoid 6s rate-limit delays)
+			if vulns[j].CVEID != "" && strings.HasPrefix(vulns[j].CVEID, "CVE-") && nvdAPIKey != "" {
 				nvdVuln, err := nvdClient.QueryCVE(vulns[j].CVEID)
 				if err == nil && nvdVuln != nil {
 					// Enrich with NVD data
@@ -263,12 +275,7 @@ func Scan(ctx context.Context, absPath, lockFile string, lockType lockfile.LockF
 					}
 				}
 
-				// Rate limit NVD API calls (5 req/30s without key, 50 req/30s with key)
-				if nvdAPIKey == "" {
-					time.Sleep(6 * time.Second) // 5 req/30s = 6s between requests
-				} else {
-					time.Sleep(600 * time.Millisecond) // 50 req/30s = 600ms between requests
-				}
+				time.Sleep(600 * time.Millisecond) // 50 req/30s = 600ms between requests with API key
 			}
 
 			// 2. If still no CVSS and it's a GHSA-*, try GitHub Security Advisories API
@@ -326,23 +333,10 @@ func Scan(ctx context.Context, absPath, lockFile string, lockType lockfile.LockF
 		return vulns, nil
 	})
 
-	pool.Start()
-
-	// Submit all jobs
-	for _, node := range nodesToScanList {
-		nodeKey := node.Name + "@" + node.Version
-		pool.Submit(ScanJob{
-			Node:    node,
-			NodeKey: nodeKey,
-		})
-	}
-
-	// Collect results
-	var totalVulns atomic.Int32
-	var scanned atomic.Int32
-	var resultMu sync.Mutex
-
+	// Collect results in background goroutine started before submitting jobs to avoid deadlock
+	doneCollecting := make(chan struct{})
 	go func() {
+		defer close(doneCollecting)
 		for result := range pool.Results() {
 			resultMu.Lock()
 			if result.Error == nil {
@@ -359,7 +353,21 @@ func Scan(ctx context.Context, absPath, lockFile string, lockType lockfile.LockF
 		}
 	}()
 
+	pool.Start()
+
+	// Submit all jobs
+	for _, node := range nodesToScanList {
+		nodeKey := node.Name + "@" + node.Version
+		if !pool.Submit(ScanJob{
+			Node:    node,
+			NodeKey: nodeKey,
+		}) {
+			break
+		}
+	}
+
 	pool.Close()
+	<-doneCollecting
 
 	// Build result
 	result := buildScanResultFromGraph(absPath, lockFile, lockHash, graph, lockType)
@@ -456,4 +464,19 @@ func buildGraphFromDeps(deps *lockfile.Dependencies, ecosystem types.Ecosystem) 
 
 	graph.CalculateDepths()
 	return graph
+}
+
+// getWorkerCount returns number of parallel workers from env var VIGIL_WORKERS (default 10, max 100).
+func getWorkerCount() int {
+	workers := os.Getenv("VIGIL_WORKERS")
+	if workers == "" {
+		return 10
+	}
+
+	count := 0
+	_, err := fmt.Sscanf(workers, "%d", &count)
+	if err != nil || count <= 0 || count > 100 {
+		return 10
+	}
+	return count
 }
