@@ -32,7 +32,7 @@ vigil report
 - **Full dependency chain tracking** - Shows complete vulnerability paths for all supported lock file types
 - **Temporal filtering** - Eliminates 30-40% false positives by filtering vulnerabilities published before package release
 - **Multi-source CVSS enrichment** - Aggregates scores from NVD, GitHub Security Advisories, and OSV
-- **Interactive DevSecOps TUI Dashboard** - Fullscreen Lazygit / `btm` multi-pane dashboard with 5 tabs (`[1-5]`), pane focus (`[Tab]`), pane maximization (`[w/f]`), grouping (`[g]`), search (`[/]`), reason-why-flagged viewport, dependency chain graph, and export modal (`[e]`). See [TUI User Guide](documentation/user-guide/tui.md).
+- **Interactive DevSecOps TUI Dashboard** - Productivity-focused single-pane dashboard with 5 security domains (`[1-5]`), detail expansion (`[Enter]`), quick actions (`[y]` copy, `[x]` mark fixed), visual severity badges, search (`[/]`), and export formats (`[e]`). Smart default: Critical+High filter. See [TUI User Guide](documentation/user-guide/tui.md).
 - **Comprehensive CVE data** - Titles, descriptions, publication dates, and dependency paths
 - **Multiple report formats**
   - **Table** (default): Compact Trivy-style tabular format with exploit classification

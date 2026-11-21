@@ -1,77 +1,87 @@
-# Interactive DevSecOps Fullscreen Dashboard (TUI)
+# Interactive DevSecOps Dashboard (TUI)
 
-Vigil includes a Lazygit / `btm` inspired fullscreen terminal dashboard (`StateExplorer`) designed for real-time security auditing and vulnerability inspection.
+Vigil includes a productivity-focused terminal dashboard designed for fast security auditing and vulnerability triage.
 
 ```
-🛡️ VIGIL LAZYGIT DEVSECOPS DASHBOARD | 14 VULNS | 2 SECRETS | 1 IAC RISKS
+🛡️ VIGIL DEVSECOPS DASHBOARD | 14 VULNS | 2 SECRETS | 1 IAC RISKS
 [1] Vulns (SCA)  [2] Secrets  [3] IaC Security  [4] Licenses  [5] Dep Graph
-Group: [FLAT] | Filter: [ALL] | Search: none | Active Pane: [1] | Maximize: [false]
-╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│  [1] Security Findings Table                                                                                                      │
-│ DOMAIN      SEVERITY      TARGET / PACKAGE            ID / RULE                   REASON SUMMARY                                  │
-│───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
-│ SCA         MEDIUM        storybook@8.3.2             CVE-2025-68429              A vulnerability affects storybook@8.3.2...      │
-│ SCA         MEDIUM        swiper@11.1.14              CVE-2026-27212              Prototype pollution in swiper...                │
-╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭───────────────────────────────╮╭──────────────────────────────────────────────╮╭───────────────────────────────╮
-│ 💡 [2] Reason Why Flagged     ││  [3] Detailed Inspection                     ││  [4] Dependency Tree Path     │
-│A vulnerability affects        ││Target Package: storybook@8.3.2               ││ Root: storybook@8.3.2         │
-│storybook@8.3.2 tracked as     ││ID / Rule: CVE-2025-68429                     ││ └── storybook@8.3.2          │
-│CVE-2025-68429.                ││Severity:   MEDIUM                            ││     [VULNERABLE TARGET]       │
-╰───────────────────────────────╯╰──────────────────────────────────────────────╯╰───────────────────────────────╯
- [Tab] Focus Pane | [w/f] Maximize | [↑/↓/k/j] Navigate/Scroll | [1-5] View | [/] Search | [g] Group | [e] Export | [q] Quit
+●CRIT ●HIGH ○MED ○LOW | Findings: 14 | Hidden: 0
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  Security Findings (Enter to expand details)                                                    │
+│ DOMAIN  SEVERITY   TARGET / PACKAGE           ID / RULE         REASON SUMMARY                  │
+│─────────────────────────────────────────────────────────────────────────────────────────────────│
+│ SCA     CRITICAL   lodash@4.17.20             CVE-2021-23337    Prototype pollution...          │
+│ SCA     HIGH       axios@0.21.1               CVE-2021-3749     SSRF vulnerability...           │
+│ SECRET  HIGH       .env                       AWS_ACCESS_KEY    Hardcoded AWS key...            │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+ [↑/↓] Navigate | [Enter] Details | [y] Copy | [x/X] Mark Fixed | [1-5] Tab | [c/h/m/l] Filter | [/] Search | [e] Export | [q] Quit
 ```
+
+**Smart Defaults**: Starts with Critical+High filter only. Press `a` to show all severities.
 
 ---
 
 ## 📐 Layout Architecture
 
-The TUI is organized into a **2-Tier Grid**:
+**Single-Pane Focus**: Full-screen findings table optimized for speed.
 
-1. **Top Section (Full-Width Table Pane)**:
-   - **`[1] Security Findings Table`**: Displays all findings across 5 rich columns (`DOMAIN`, `SEVERITY`, `TARGET / PACKAGE`, `ID / RULE`, `REASON SUMMARY`).
-2. **Bottom Section (3 Side-by-Side Panes)**:
-   - **`💡 [2] Reason Why Flagged`** (Width: 25%): Full word-wrapped explanation detailing why the selected finding was flagged.
-   - **`󰈔 [3] Detailed Inspection`** (Width: 50%): Deep inspection pane with CVSS score & vector, vulnerability context, and recommended remediation.
-   - **`󰒍 [4] Dependency Tree Path`** (Width: 25%): Interactive graph path showing exact tree hierarchy (`Root ➔ Dep ➔ Target [VULNERABLE]`).
+- **Table View**: All findings in sortable 5-column layout (`DOMAIN`, `SEVERITY`, `TARGET`, `ID/RULE`, `REASON`)
+- **Detail Expansion**: Press `Enter` to toggle detail pane below selected finding (Package info, Reason, Dependency chain, Remediation)
+- **Visual Filter Badges**: Active severity filters shown as colored badges (●CRIT ●HIGH ○MED ○LOW)
+- **Status Bar**: Context-aware keybindings always visible
 
 ---
 
 ## ⌨️ Keybindings & Controls
 
-### Navigation & Focus
+### Navigation
 
 | Key | Action |
 | --- | --- |
-| `Tab` / `Shift+Tab` | Cycle active pane focus between Panes `[1]`, `[2]`, `[3]`, `[4]` |
-| `w` / `f` | Toggle 100% fullscreen maximization for the currently active pane |
-| `↑` / `↓` / `k` / `j` | Navigate items in Table `[1]` or scroll viewports in `[2]`, `[3]`, `[4]` |
+| `↑` / `↓` / `k` / `j` | Navigate table rows |
+| `Enter` | Toggle detail pane expansion (collapsed by default) |
 
-### Tabs (`[1-5]`)
+### Quick Actions
 
-| Key | Tab View | Content |
+| Key | Action |
+| --- | --- |
+| `y` | Copy CVE/Rule ID to clipboard |
+| `x` | Mark finding as fixed (hides from view) |
+| `X` | Unmark finding (unhide) |
+
+### Tabs (Security Domains)
+
+| Key | Domain | Content |
 | --- | --- | --- |
-| `1` | `Vulns (SCA)` | Software Composition Analysis vulnerabilities |
-| `2` | `Secrets` | Hardcoded AWS keys, PAT tokens, SSH keys, DB credentials |
-| `3` | `IaC Security` | Dockerfile & GitHub Actions security linting issues |
-| `4` | `Licenses` | Permissive vs Copyleft (GPL/AGPL) license risk analysis |
-| `5` | `Dep Graph` | Complete dependency graph nodes |
+| `1` | Vulns (SCA) | Software Composition Analysis vulnerabilities |
+| `2` | Secrets | Hardcoded AWS keys, PAT tokens, SSH keys, DB credentials |
+| `3` | IaC Security | Dockerfile & GitHub Actions security linting issues |
+| `4` | Licenses | Permissive vs Copyleft (GPL/AGPL) license risk analysis |
+| `5` | Dep Graph | Complete dependency graph nodes |
 
 ### Filtering & Search
 
 | Key | Action |
 | --- | --- |
-| `g` | Cycle grouping mode (`FLAT` ➔ `BY PACKAGE` ➔ `BY SEVERITY`) |
-| `c` | Quick filter: `CRITICAL` severity only |
-| `h` | Quick filter: `HIGH` severity only |
-| `m` | Quick filter: `MEDIUM` severity only |
-| `l` | Quick filter: `LOW` severity only |
-| `a` / `Esc` | Reset all filters and search query |
-| `/` | Open live interactive search prompt |
+| `c` | Filter: `CRITICAL` severity only |
+| `h` | Filter: `HIGH` severity only |
+| `m` | Filter: `MEDIUM` severity only |
+| `l` | Filter: `LOW` severity only |
+| `a` / `Esc` | Reset all filters and search (show all) |
+| `/` | Open live search prompt (filter by text) |
+
+**Smart Default**: TUI starts with Critical+High filter active. Visual badges show active filters.
 
 ### Export & Quit
 
 | Key | Action |
 | --- | --- |
-| `e` | Open interactive Export Report Dialog modal (`JSON`, `CSV`, `Markdown`, `CycloneDX`, `SPDX`) |
-| `q` / `Ctrl+C` | Exit TUI dashboard |
+| `e` | Open Export Report Dialog (`JSON`, `CSV`, `Markdown`, `CycloneDX`, `SPDX`) |
+| `q` / `Ctrl+C` | Exit dashboard |
+
+## 🔧 Configuration
+
+**Worker Pool**: Control parallel scan performance via environment variable:
+```bash
+VIGIL_WORKERS=20 vigil scan  # Default: 10, Max: 100
+```
