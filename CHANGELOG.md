@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.1] - 2026-11-22
+
+### Fixed
+
+- **TUI Tab Contrast on Solarized & Light/Dark Terminals (`internal/ui/styles.go`, `internal/ui/scanner.go`)**
+  - Replaced low-contrast Dracula-only inactive tab colours with `lipgloss.AdaptiveColor` and high-contrast active tab styling (`#FFFFFF` on `#5F5FD7`), plus explicit spacing between tabs so inactive tabs remain clearly legible on Solarized Dark and Solarized Light themes.
+
 ## [2.9.0] - 2026-11-22
 
 ### Changed

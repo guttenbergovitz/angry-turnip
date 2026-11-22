@@ -1274,7 +1274,10 @@ func (m *Model) renderExplorer() string {
 		{TabEvidence, "[i] Evidence"},
 	}
 	var renderedTabs []string
-	for _, t := range tabs {
+	for i, t := range tabs {
+		if i > 0 {
+			renderedTabs = append(renderedTabs, " ")
+		}
 		if t.tab == m.activeTab {
 			renderedTabs = append(renderedTabs, m.styles.ActiveTab.Render(t.label))
 		} else {

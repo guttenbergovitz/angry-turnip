@@ -53,13 +53,13 @@ func DefaultStyles() Styles {
 
 		ActiveTab: lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#F8F8F2")).
-			Background(lipgloss.Color("#6272A4")).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(lipgloss.Color("#5F5FD7")).
 			Padding(0, 2),
 
 		InactiveTab: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#6272A4")).
-			Background(lipgloss.Color("#282A36")).
+			Foreground(lipgloss.AdaptiveColor{Light: "#3A3A3A", Dark: "#D0D0D0"}).
+			Background(lipgloss.AdaptiveColor{Light: "#E4E4E4", Dark: "#3A3A3A"}).
 			Padding(0, 2),
 
 		TabGap: lipgloss.NewStyle().
