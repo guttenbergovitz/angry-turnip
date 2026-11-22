@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.2.3] - 2026-11-22
+## [2.3.0] - 2026-11-22
+
+### Added
+
+- **Keyless Threat Intelligence Enrichment (CISA KEV & FIRST EPSS)**
+  - Added `internal/kev` client querying the public CISA Known Exploited Vulnerabilities (KEV) catalogue (fetched at most once per scan and cached in memory) to flag actively exploited CVEs (`known_exploited: true`, source `cisa-kev`).
+  - Added `internal/epss` client querying the public FIRST EPSS API in batches (up to 50 CVEs per request) to attach 30-day exploitation probability and percentile rank (`epss_score`, `epss_percentile`, source `epss`).
+  - Executed as a single best-effort post-scan pass that makes zero network requests on clean scans and never degrades `ScanCoverage` on network failure.
+  - Propagated KEV and EPSS fields through `policy.Finding` deduplication and surfaced them in `vigil explain`.
+- **Free API Key & Public Source Documentation**
+  - Updated `README.md` and `documentation/user-guide/commands.md` to clearly document keyless operation (OSV.dev, public GHSA REST, CISA KEV, FIRST EPSS), free key acquisition links (`NVD_API_KEY`, `GITHUB_TOKEN`), required scopes, and rate limits.
 
 ### Fixed
 
