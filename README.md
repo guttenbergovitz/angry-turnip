@@ -56,7 +56,13 @@ atnp report
 
 ## Installation
 
-### Option 1: go install (Recommended)
+### Option 1: Homebrew (macOS & Linux)
+
+```bash
+brew install guttenbergovitz/tap/atnp
+```
+
+### Option 2: go install (Recommended)
 
 ```bash
 go install github.com/guttenbergovitz/angry-turnip/cmd/atnp@latest

@@ -1,0 +1,63 @@
+version: 2
+
+project_name: angry-turnip
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: atnp
+    main: ./cmd/atnp
+    binary: atnp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/guttenbergovitz/angry-turnip/internal/version.Version={{.Version}}
+      - -X github.com/guttenbergovitz/angry-turnip/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/guttenbergovitz/angry-turnip/internal/version.Date={{.Date}}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+
+brews:
+  - name: atnp
+    repository:
+      owner: guttenbergovitz
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/guttenbergovitz/angry-turnip
+    description: Multi-ecosystem security scanner, explainable policy engine, SBOM & SARIF CLI
+    license: MIT
+    skip_upload: "{{ if not .Env.HOMEBREW_TAP_TOKEN }}true{{ else }}false{{ end }}"
+    test: |
+      assert_match "atnp", shell_output("#{bin}/atnp version")
+    install: |
+      bin.install "atnp"

@@ -5,7 +5,19 @@
 - Go 1.27+ (`go version` to check)
 - Git (for source installation)
 
-## Option 1: go install (Recommended)
+## Option 1: Homebrew (macOS & Linux)
+
+```bash
+brew install guttenbergovitz/tap/atnp
+```
+
+Verify installation:
+
+```bash
+atnp version
+```
+
+## Option 2: go install (Recommended)
 
 Install latest release directly from source:
 
