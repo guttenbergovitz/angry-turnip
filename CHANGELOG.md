@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-11-22
+
+### Added
+
+- **Policy Enforcement for Resolution Completeness (`on_resolution_incomplete`)**
+  - Added `on_resolution_incomplete` (`ALLOW` / `REVIEW` / `BLOCK`) to `policy.Policy` (defaulting to `DecisionReview` when `Resolution.Completeness` is `ambiguous` or `Resolution.Unresolved` / `Resolution.Ambiguous` is non-empty), preventing an ambiguous or unsatisfied dependency graph from silently passing as `ALLOW` even when OSV lookups succeed (`EvidenceState = COMPLETE`).
+
+### Fixed
+
+- **Separated `missing_exact_dependency`, `constraint_unsatisfied`, and `ambiguous_candidates` (`internal/lockfile`)**
+  - Fixed `buildPythonGraph` and `ParseCargoLockGraph` so a missing exact version pin (`missing_exact_dependency`) or a version constraint satisfied by zero lockfile versions (`constraint_unsatisfied`, even when a single incompatible candidate version exists) is recorded in `graph.Unresolved` (`Resolution.Unresolved`) with zero edges, never falling back to an incompatible version or misclassifying zero matches as `ambiguous`.
+  - Fixed PEP 440 compatible release (`~=`) upper-bound calculation (`~=1.4.5` -> `>=1.4.5, <1.5.0`) and restricted `matchesPythonVersionSpec` to strict numeric versions, reporting unsupported pre-release/union specifiers as `unsupported_version_constraint` (`ambiguous`) rather than guessing.
+- **Labelled-Case Precision (`lbl-prec`) & Unlabelled Count (`unlbl`) in Benchmark Runner**
+  - Updated `benchmarks/reference/cmd/compare` and `benchmarks/reference/RESULTS.md` to report `lbl-prec` (precision over labelled positive and negative controls) alongside `unlbl` (unlabelled extra findings returned by the scanner).
+
 ## [2.7.0] - 2026-11-22
 
 ### Added

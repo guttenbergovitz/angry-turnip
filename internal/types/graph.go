@@ -21,10 +21,11 @@ type DependencyNode struct {
 
 // DependencyGraph represents a full dependency tree.
 type DependencyGraph struct {
-	Ecosystem Ecosystem                  // Overall ecosystem of graph
-	Nodes     map[string]*DependencyNode // Keyed by "name@version"
-	Root      []string                   // Direct dependencies: []"name@version"
-	Ambiguous []AmbiguousDependency      // Dependency edges that matched >1 candidate version
+	Ecosystem  Ecosystem                  // Overall ecosystem of graph
+	Nodes      map[string]*DependencyNode // Keyed by "name@version"
+	Root       []string                   // Direct dependencies: []"name@version"
+	Unresolved []UnresolvedDependency     // Missing exact pins or unsatisfied version constraints
+	Ambiguous  []AmbiguousDependency      // Dependency edges that matched >1 candidate version
 }
 
 // NewDependencyGraph creates a new empty graph.

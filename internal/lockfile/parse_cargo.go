@@ -80,12 +80,22 @@ func ParseCargoLockGraph(r io.Reader) (*types.DependencyGraph, error) {
 				exactKey := depNameLower + "@" + dep.Version
 				if _, ok := graph.Nodes[exactKey]; ok {
 					graph.AddEdge(parentKey, exactKey)
-					continue
+				} else {
+					graph.Unresolved = append(graph.Unresolved, types.UnresolvedDependency{
+						Package: fmt.Sprintf("%s@%s (required by %s)", depNameLower, dep.Version, parentKey),
+						Reason:  "missing_exact_dependency: pinned crate version is not present in Cargo.lock",
+					})
 				}
+				continue
 			}
 
 			candidates := nodesByName[depNameLower]
-			if len(candidates) == 1 {
+			if len(candidates) == 0 {
+				graph.Unresolved = append(graph.Unresolved, types.UnresolvedDependency{
+					Package: fmt.Sprintf("%s (required by %s)", depNameLower, parentKey),
+					Reason:  "missing_exact_dependency: required crate is not present in Cargo.lock",
+				})
+			} else if len(candidates) == 1 {
 				graph.AddEdge(parentKey, candidates[0])
 			} else if len(candidates) > 1 {
 				// Multiple versions of the crate exist in Cargo.lock without an explicit version

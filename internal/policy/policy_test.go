@@ -899,3 +899,60 @@ func TestWriteSARIFMapsDecisionsAndProvenance(t *testing.T) {
 		t.Errorf("expected SARIF output for incomplete scan to contain VIGIL-SCAN-INCOMPLETE result, got:\n%s", partialBuf.String())
 	}
 }
+
+func TestResolutionIncompletePolicyEnforcement(t *testing.T) {
+	// Clean OSV lookups (EvidenceState=COMPLETE), but ambiguous graph resolution (Resolution.Completeness=ambiguous).
+	res := &types.ScanResult{
+		LockFile: "poetry.lock",
+		Coverage: types.ScanCoverage{
+			ResolutionScope: "graph-lockfile",
+			TotalPackages:   3,
+			ScannedPackages: 3,
+		},
+		Resolution: types.ResolutionEvidence{
+			InputKind:       types.InputKindLockfile,
+			ResolverVersion: "1",
+			Completeness:    types.ResolutionAmbiguous,
+			Ambiguous: []types.AmbiguousDependency{
+				{
+					Parent:     "app@1.0.0",
+					Dependency: "urllib3",
+					Candidates: []string{"urllib3@1.26.4", "urllib3@2.0.7"},
+					Reason:     "ambiguous_candidates: multiple versions satisfy constraint",
+				},
+			},
+		},
+		Dependencies: []types.Dependency{
+			{Name: "app", Version: "1.0.0", Ecosystem: types.EcosystemPyPI, Type: types.Production, Direct: true, ScanStatus: types.StatusScanned},
+			{Name: "urllib3", Version: "1.26.4", Ecosystem: types.EcosystemPyPI, Type: types.Production, Ambiguous: true, ScanStatus: types.StatusScanned},
+			{Name: "urllib3", Version: "2.0.7", Ecosystem: types.EcosystemPyPI, Type: types.Production, Ambiguous: true, ScanStatus: types.StatusScanned},
+		},
+	}
+
+	now := time.Now().UTC()
+	evalDefault := Evaluate(res, DefaultPolicy(), nil, now)
+	if evalDefault.EvidenceState != EvidenceComplete {
+		t.Errorf("expected EvidenceState=COMPLETE when all OSV lookups succeeded, got %s", evalDefault.EvidenceState)
+	}
+	if evalDefault.OverallDecision != DecisionReview {
+		t.Errorf("expected DefaultPolicy to escalate ambiguous graph resolution to REVIEW (never silent ALLOW), got %s", evalDefault.OverallDecision)
+	}
+
+	// Explicit on_resolution_incomplete: BLOCK escalates to BLOCK.
+	blockPol, err := ParsePolicy([]byte("version: 1\non_resolution_incomplete: BLOCK\nrules:\n  - name: r\n    decision: BLOCK\n    min_severity: critical\n"))
+	if err != nil {
+		t.Fatalf("ParsePolicy error: %v", err)
+	}
+	if evalBlock := Evaluate(res, blockPol, nil, now); evalBlock.OverallDecision != DecisionBlock {
+		t.Errorf("expected BLOCK when on_resolution_incomplete: BLOCK, got %s", evalBlock.OverallDecision)
+	}
+
+	// Explicit on_resolution_incomplete: ALLOW permits opting out.
+	allowPol, err := ParsePolicy([]byte("version: 1\non_resolution_incomplete: ALLOW\nrules:\n  - name: r\n    decision: BLOCK\n    min_severity: critical\n"))
+	if err != nil {
+		t.Fatalf("ParsePolicy error: %v", err)
+	}
+	if evalAllow := Evaluate(res, allowPol, nil, now); evalAllow.OverallDecision != DecisionAllow {
+		t.Errorf("expected ALLOW when on_resolution_incomplete: ALLOW, got %s", evalAllow.OverallDecision)
+	}
+}

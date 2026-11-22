@@ -98,11 +98,15 @@ func formatScore(run scannerRun, expectedPos, expectedNeg map[string]bool) strin
 	if tot == 0 {
 		tot = len(run.Findings)
 	}
-	precPct := 100
-	if tp+fp > 0 {
-		precPct = (tp * 100) / (tp + fp)
+	unlabelled := tot - tp - fp
+	if unlabelled < 0 {
+		unlabelled = 0
 	}
-	return fmt.Sprintf("%s (rec %d/%d, prec %d%%, tot %d)", run.Status, tp, len(expectedPos), precPct, tot)
+	lblPrecPct := 100
+	if tp+fp > 0 {
+		lblPrecPct = (tp * 100) / (tp + fp)
+	}
+	return fmt.Sprintf("%s (rec %d/%d, lbl-prec %d%%, unlbl %d, tot %d)", run.Status, tp, len(expectedPos), lblPrecPct, unlabelled, tot)
 }
 
 func formatScoreWithOverlap(run, vigilRun scannerRun, expectedPos, expectedNeg map[string]bool) string {

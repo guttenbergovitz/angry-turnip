@@ -101,8 +101,10 @@ func buildPythonGraph(pkgs []pythonPackage) *types.DependencyGraph {
 	}
 
 	// Second pass: resolve dependency edges by exact (name, version) or version constraint.
-	// If multiple candidate versions remain ambiguous, do NOT fabricate edges; record
-	// AmbiguousDependency on the graph and mark candidates as Ambiguous.
+	// Distinguishes three distinct data defects without fabricating edges:
+	// 1. missing_exact_dependency: exact version pin does not exist in lockfile -> graph.Unresolved
+	// 2. constraint_unsatisfied: zero versions in lockfile satisfy constraint -> graph.Unresolved
+	// 3. ambiguous_candidates / unsupported_version_constraint: >1 candidates or unevaluable spec -> graph.Ambiguous
 	ambiguousChildren := make(map[string]bool)
 	for _, pkg := range pkgs {
 		parentKey := strings.ToLower(strings.TrimSpace(pkg.Name)) + "@" + pkg.Version
@@ -111,53 +113,115 @@ func buildPythonGraph(pkgs []pythonPackage) *types.DependencyGraph {
 			if depNameLower == "" {
 				continue
 			}
+
+			// 1. Exact version pin on dependency edge.
 			if dep.Version != "" {
 				exactKey := depNameLower + "@" + dep.Version
 				if _, ok := graph.Nodes[exactKey]; ok {
 					graph.AddEdge(parentKey, exactKey)
-					continue
+				} else {
+					graph.Unresolved = append(graph.Unresolved, types.UnresolvedDependency{
+						Package: fmt.Sprintf("%s@%s (required by %s)", depNameLower, dep.Version, parentKey),
+						Reason:  "missing_exact_dependency: pinned dependency version is not present in lockfile",
+					})
 				}
+				continue
 			}
 
 			candidates := nodesByName[depNameLower]
 			if len(candidates) == 0 {
+				if !dep.Optional {
+					graph.Unresolved = append(graph.Unresolved, types.UnresolvedDependency{
+						Package: fmt.Sprintf("%s (required by %s)", depNameLower, parentKey),
+						Reason:  "missing_exact_dependency: required package is not present in lockfile",
+					})
+				}
 				continue
 			}
+
+			// 2. Evaluate version constraint against all candidates (even when len(candidates) == 1)
+			// so a single incompatible version in the lockfile is never falsely linked.
+			if dep.Constraint != "" && dep.Constraint != "*" {
+				var matched []string
+				unsupportedSpec := false
+				for _, candKey := range candidates {
+					node := graph.Nodes[candKey]
+					if node == nil {
+						continue
+					}
+					ok, supported := matchesPythonVersionSpec(node.Version, dep.Constraint)
+					if !supported {
+						unsupportedSpec = true
+						break
+					}
+					if ok {
+						matched = append(matched, candKey)
+					}
+				}
+
+				if unsupportedSpec {
+					graph.Ambiguous = append(graph.Ambiguous, types.AmbiguousDependency{
+						Parent:     parentKey,
+						Dependency: depNameLower,
+						Candidates: append([]string(nil), candidates...),
+						Reason:     fmt.Sprintf("unsupported_version_constraint: constraint %q cannot be statically evaluated", dep.Constraint),
+					})
+					for _, candKey := range candidates {
+						ambiguousChildren[candKey] = true
+						if node := graph.Nodes[candKey]; node != nil {
+							node.Ambiguous = true
+						}
+					}
+					continue
+				}
+
+				if len(matched) == 0 {
+					if !dep.Optional {
+						graph.Unresolved = append(graph.Unresolved, types.UnresolvedDependency{
+							Package: fmt.Sprintf("%s (%s, required by %s)", depNameLower, dep.Constraint, parentKey),
+							Reason:  fmt.Sprintf("constraint_unsatisfied: zero versions in lockfile satisfy %q (available: %s)", dep.Constraint, strings.Join(candidates, ", ")),
+						})
+					}
+					continue
+				}
+
+				if len(matched) == 1 {
+					graph.AddEdge(parentKey, matched[0])
+					continue
+				}
+
+				graph.Ambiguous = append(graph.Ambiguous, types.AmbiguousDependency{
+					Parent:     parentKey,
+					Dependency: depNameLower,
+					Candidates: matched,
+					Reason:     fmt.Sprintf("ambiguous_candidates: constraint %q matched %d candidate versions", dep.Constraint, len(matched)),
+				})
+				for _, candKey := range matched {
+					ambiguousChildren[candKey] = true
+					if node := graph.Nodes[candKey]; node != nil {
+						node.Ambiguous = true
+					}
+				}
+				continue
+			}
+
+			// 3. No version pin and no narrowing constraint.
 			if len(candidates) == 1 {
 				graph.AddEdge(parentKey, candidates[0])
 				continue
 			}
 
-			// Multiple versions exist: try to disambiguate using the version constraint.
-			var matched []string
-			if dep.Constraint != "" && dep.Constraint != "*" {
-				for _, candKey := range candidates {
-					if node := graph.Nodes[candKey]; node != nil && matchesPythonVersionSpec(node.Version, dep.Constraint) {
-						matched = append(matched, candKey)
-					}
-				}
-			}
-			if len(matched) == 1 {
-				graph.AddEdge(parentKey, matched[0])
-				continue
-			}
-			if len(matched) == 0 {
-				matched = append([]string(nil), candidates...)
-			}
-
-			reason := "multiple package versions present in lockfile without unique version pin"
+			reason := "ambiguous_candidates: multiple package versions present in lockfile without unique version pin"
 			if dep.Marker != "" {
-				reason = fmt.Sprintf("multiple package versions gated by environment marker (%s)", dep.Marker)
-			} else if dep.Constraint != "" {
-				reason = fmt.Sprintf("version constraint %q matched %d candidate versions", dep.Constraint, len(matched))
+				reason = fmt.Sprintf("ambiguous_candidates: multiple package versions gated by environment marker (%s)", dep.Marker)
 			}
 			graph.Ambiguous = append(graph.Ambiguous, types.AmbiguousDependency{
 				Parent:     parentKey,
 				Dependency: depNameLower,
-				Candidates: matched,
+				Candidates: append([]string(nil), candidates...),
 				Reason:     reason,
 			})
-			for _, candKey := range matched {
+			for _, candKey := range candidates {
 				ambiguousChildren[candKey] = true
 				if node := graph.Nodes[candKey]; node != nil {
 					node.Ambiguous = true
@@ -387,118 +451,176 @@ func extractPoetryDepSpec(raw any) (constraint, marker string, optional bool) {
 	}
 }
 
-// matchesPythonVersionSpec evaluates common PEP 440 / Poetry version constraints
-// (==, !=, >=, <=, >, <, ^, ~) against a concrete version string to disambiguate
-// multi-version lockfile packages when possible.
-func matchesPythonVersionSpec(version, spec string) bool {
+// matchesPythonVersionSpec evaluates supported numeric PEP 440 / Poetry version constraints
+// (==, !=, >=, <=, >, <, ~=, ^) against a concrete numeric version string.
+// Returns (matched, supported). If the version or specifier uses unsupported pre-release,
+// post-release, local, or union syntax, supported=false is returned so the caller records
+// the edge as ambiguous rather than guessing.
+func matchesPythonVersionSpec(version, spec string) (bool, bool) {
 	version = strings.TrimSpace(version)
 	spec = strings.TrimSpace(spec)
 	if version == "" || spec == "" || spec == "*" {
-		return true
+		return true, true
+	}
+	vParts, vOK := parseStrictNumericVersion(version)
+	if !vOK {
+		return false, false
+	}
+	if strings.Contains(spec, "||") || strings.Contains(spec, "|") || strings.Contains(spec, "@") || strings.Contains(spec, "===") {
+		return false, false
 	}
 
-	// Handle Caret (^1.2.3 -> >=1.2.3, <2.0.0)
+	// Handle Poetry Caret (^1.2.3 -> >=1.2.3, <2.0.0; ^0.2.3 -> >=0.2.3, <0.3.0; ^0.0.3 -> >=0.0.3, <0.0.4)
 	if strings.HasPrefix(spec, "^") {
 		base := strings.TrimSpace(strings.TrimPrefix(spec, "^"))
-		vParts := parseNumericVersion(version)
-		bParts := parseNumericVersion(base)
-		if len(vParts) == 0 || len(bParts) == 0 {
-			return false
+		bParts, ok := parseStrictNumericVersion(base)
+		if !ok {
+			return false, false
 		}
 		if compareVersionSlices(vParts, bParts) < 0 {
-			return false
+			return false, true
 		}
 		upper := []int{bParts[0] + 1, 0, 0}
-		if bParts[0] == 0 && len(bParts) > 1 {
-			upper = []int{0, bParts[1] + 1, 0}
+		if bParts[0] == 0 {
+			if len(bParts) > 1 && bParts[1] > 0 {
+				upper = []int{0, bParts[1] + 1, 0}
+			} else if len(bParts) > 2 {
+				upper = []int{0, 0, bParts[2] + 1}
+			}
 		}
-		return compareVersionSlices(vParts, upper) < 0
+		return compareVersionSlices(vParts, upper) < 0, true
 	}
 
-	// Handle comma-separated PEP 440 clauses (e.g. ">=1.26,<2.0")
+	// Handle comma-separated PEP 440 clauses (e.g. ">=1.26,<2.0" or "~=1.4.5")
 	for _, clause := range strings.Split(spec, ",") {
 		c := strings.TrimSpace(clause)
 		if c == "" {
 			continue
 		}
 		switch {
+		case strings.HasPrefix(c, "~="):
+			// PEP 440 compatible release: ~= V.N requires >= V.N and < (V+1).0;
+			// ~= V.N.M requires >= V.N.M and < V.(N+1).0 (pads/Drops last segment and increments second-to-last).
+			base := strings.TrimSpace(strings.TrimPrefix(c, "~="))
+			bParts, ok := parseStrictNumericVersion(base)
+			if !ok || len(bParts) < 2 {
+				return false, false
+			}
+			if compareVersionSlices(vParts, bParts) < 0 {
+				return false, true
+			}
+			upper := make([]int, len(bParts)-1)
+			copy(upper, bParts[:len(bParts)-1])
+			upper[len(upper)-1]++
+			if compareVersionSlices(vParts, upper) >= 0 {
+				return false, true
+			}
 		case strings.HasPrefix(c, "=="):
 			target := strings.TrimSpace(strings.TrimPrefix(c, "=="))
 			if strings.HasSuffix(target, ".*") {
-				prefix := strings.TrimSuffix(target, "*")
-				if !strings.HasPrefix(version, prefix) {
-					return false
+				prefixStr := strings.TrimSuffix(target, ".*")
+				pParts, ok := parseStrictNumericVersion(prefixStr)
+				if !ok {
+					return false, false
 				}
-			} else if compareVersions(version, target) != 0 {
-				return false
+				for i, pv := range pParts {
+					vv := 0
+					if i < len(vParts) {
+						vv = vParts[i]
+					}
+					if vv != pv {
+						return false, true
+					}
+				}
+			} else {
+				tParts, ok := parseStrictNumericVersion(target)
+				if !ok {
+					return false, false
+				}
+				if compareVersionSlices(vParts, tParts) != 0 {
+					return false, true
+				}
 			}
 		case strings.HasPrefix(c, "!="):
 			target := strings.TrimSpace(strings.TrimPrefix(c, "!="))
-			if compareVersions(version, target) == 0 {
-				return false
+			if strings.HasSuffix(target, ".*") {
+				return false, false
+			}
+			tParts, ok := parseStrictNumericVersion(target)
+			if !ok {
+				return false, false
+			}
+			if compareVersionSlices(vParts, tParts) == 0 {
+				return false, true
 			}
 		case strings.HasPrefix(c, ">="):
-			if compareVersions(version, strings.TrimSpace(strings.TrimPrefix(c, ">="))) < 0 {
-				return false
+			tParts, ok := parseStrictNumericVersion(strings.TrimSpace(strings.TrimPrefix(c, ">=")))
+			if !ok {
+				return false, false
+			}
+			if compareVersionSlices(vParts, tParts) < 0 {
+				return false, true
 			}
 		case strings.HasPrefix(c, "<="):
-			if compareVersions(version, strings.TrimSpace(strings.TrimPrefix(c, "<="))) > 0 {
-				return false
+			tParts, ok := parseStrictNumericVersion(strings.TrimSpace(strings.TrimPrefix(c, "<=")))
+			if !ok {
+				return false, false
 			}
-		case strings.HasPrefix(c, "~="):
-			base := strings.TrimSpace(strings.TrimPrefix(c, "~="))
-			if compareVersions(version, base) < 0 {
-				return false
-			}
-			bParts := parseNumericVersion(base)
-			vParts := parseNumericVersion(version)
-			if len(bParts) >= 2 && len(vParts) >= 1 && vParts[0] != bParts[0] {
-				return false
+			if compareVersionSlices(vParts, tParts) > 0 {
+				return false, true
 			}
 		case strings.HasPrefix(c, ">"):
-			if compareVersions(version, strings.TrimSpace(strings.TrimPrefix(c, ">"))) <= 0 {
-				return false
+			tParts, ok := parseStrictNumericVersion(strings.TrimSpace(strings.TrimPrefix(c, ">")))
+			if !ok {
+				return false, false
+			}
+			if compareVersionSlices(vParts, tParts) <= 0 {
+				return false, true
 			}
 		case strings.HasPrefix(c, "<"):
-			if compareVersions(version, strings.TrimSpace(strings.TrimPrefix(c, "<"))) >= 0 {
-				return false
+			tParts, ok := parseStrictNumericVersion(strings.TrimSpace(strings.TrimPrefix(c, "<")))
+			if !ok {
+				return false, false
+			}
+			if compareVersionSlices(vParts, tParts) >= 0 {
+				return false, true
 			}
 		default:
-			if compareVersions(version, c) != 0 {
-				return false
+			tParts, ok := parseStrictNumericVersion(c)
+			if !ok {
+				return false, false
+			}
+			if compareVersionSlices(vParts, tParts) != 0 {
+				return false, true
 			}
 		}
 	}
-	return true
+	return true, true
 }
 
-func compareVersions(a, b string) int {
-	return compareVersionSlices(parseNumericVersion(a), parseNumericVersion(b))
-}
-
-func parseNumericVersion(v string) []int {
-	var out []int
-	num := 0
-	inDigits := false
-	for _, r := range v {
-		if r >= '0' && r <= '9' {
+// parseStrictNumericVersion parses dotted non-negative integers (e.g. "1.26.4").
+// Returns ok=false if any segment contains pre-release, post-release, local, or wildcard tokens.
+func parseStrictNumericVersion(v string) ([]int, bool) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil, false
+	}
+	segments := strings.Split(v, ".")
+	out := make([]int, 0, len(segments))
+	for _, seg := range segments {
+		if seg == "" {
+			return nil, false
+		}
+		num := 0
+		for _, r := range seg {
+			if r < '0' || r > '9' {
+				return nil, false
+			}
 			num = num*10 + int(r-'0')
-			inDigits = true
-		} else {
-			if inDigits {
-				out = append(out, num)
-				num = 0
-				inDigits = false
-			}
-			if r != '.' {
-				break
-			}
 		}
-	}
-	if inDigits {
 		out = append(out, num)
 	}
-	return out
+	return out, true
 }
 
 func compareVersionSlices(a, b []int) int {

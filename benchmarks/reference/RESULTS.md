@@ -6,9 +6,13 @@ Executed on **2026-11-22** via `go run ./benchmarks/reference/cmd/compare` again
 
 1. **Controlled Reference Fixtures (Not Universal Equivalence)**: These six fixtures are small, deterministic reference manifests designed to verify PURL construction, alias normalization, evidence accounting, and known historical CVE recall across all supported ecosystems. Matching counts on a controlled fixture do not imply universal equivalence across arbitrary real-world repositories.
 2. **Canonical Set Normalization**: Every scanner's output is parsed from its native JSON schema and normalized to canonical `<ADVISORY_ID>|<PURL>` keys (with `GHSA-*` and `CVE-*` aliases expanded for recall and set-intersection matching, while `tot` reports the scanner's deduplicated finding count).
-3. **`EvidenceState` vs `ResolutionScope`**:
-   - `EvidenceState = COMPLETE` means 100% of dependencies resolved within the manifest's `ResolutionScope` were queried without error.
-   - `ResolutionScope` explicitly distinguishes full transitive lock files (`full-lockfile`) from Go module requirement manifests (`go-mod-manifest`), partial Maven POMs (`partial-pom`), and flat requirements files (`flat-manifest`).
+3. **Labelled-Case Precision (`lbl-prec`) & Unlabelled Findings (`unlbl`)**:
+   - `rec` (Recall) measures `TP / (TP + FN)` against `known_historical_cves`.
+   - `lbl-prec` (Labelled-Case Precision) measures `TP / (TP + FP)` specifically over the labelled positive (`known_historical_cves`) and negative (`verified_negative_cves`) ground-truth controls.
+   - `unlbl` reports the count of additional findings returned by a scanner that are outside the small labelled ground-truth set (`tot - TP - FP`), ensuring unverified extra findings are never conflated with full-corpus precision.
+4. **`EvidenceState` vs `ResolutionEvidence`**:
+   - `EvidenceState = COMPLETE` means 100% of dependencies resolved within the input artifact were queried without error.
+   - `Resolution.Completeness` (`complete`, `partial`, `ambiguous`) independently tracks graph resolution quality and is enforced by `on_resolution_incomplete` (`REVIEW` by default when ambiguous or unresolved edges exist).
 
 ## Live Results on Reference Fixtures
 

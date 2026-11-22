@@ -738,6 +738,10 @@ func buildResolutionEvidence(graph *types.DependencyGraph, lockType lockfile.Loc
 				})
 			}
 		}
+		if len(graph.Unresolved) > 0 {
+			ev.Unresolved = append(ev.Unresolved, graph.Unresolved...)
+			ev.Limitations = append(ev.Limitations, fmt.Sprintf("%d dependency reference(s) in the lockfile could not be matched to any resolved package version.", len(graph.Unresolved)))
+		}
 		if len(graph.Ambiguous) > 0 {
 			ev.Ambiguous = append([]types.AmbiguousDependency(nil), graph.Ambiguous...)
 			ev.Limitations = append(ev.Limitations, fmt.Sprintf("%d dependency edge(s) matched multiple candidate versions in the lockfile and were left unlinked.", len(graph.Ambiguous)))

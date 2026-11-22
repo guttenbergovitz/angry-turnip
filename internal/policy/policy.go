@@ -70,6 +70,7 @@ type Policy struct {
 	FailOnScanError          *bool       `yaml:"fail_on_scan_error,omitempty" json:"fail_on_scan_error,omitempty"`
 	FailOnUnsupported        *bool       `yaml:"fail_on_unsupported,omitempty" json:"fail_on_unsupported,omitempty"`
 	OnThreatIntelUnavailable Decision    `yaml:"on_threat_intel_unavailable,omitempty" json:"on_threat_intel_unavailable,omitempty"`
+	OnResolutionIncomplete   Decision    `yaml:"on_resolution_incomplete,omitempty" json:"on_resolution_incomplete,omitempty"`
 	Rules                    []Rule      `yaml:"rules" json:"rules"`
 	Exceptions               []Exception `yaml:"exceptions,omitempty" json:"exceptions,omitempty"`
 }
@@ -215,6 +216,15 @@ func ParsePolicy(data []byte) (Policy, error) {
 		case DecisionAllow, DecisionReview, DecisionBlock:
 		default:
 			return Policy{}, fmt.Errorf("invalid on_threat_intel_unavailable %q (allowed: ALLOW, REVIEW, BLOCK)", pol.OnThreatIntelUnavailable)
+		}
+	}
+
+	if pol.OnResolutionIncomplete != "" {
+		pol.OnResolutionIncomplete = Decision(strings.ToUpper(strings.TrimSpace(string(pol.OnResolutionIncomplete))))
+		switch pol.OnResolutionIncomplete {
+		case DecisionAllow, DecisionReview, DecisionBlock:
+		default:
+			return Policy{}, fmt.Errorf("invalid on_resolution_incomplete %q (allowed: ALLOW, REVIEW, BLOCK)", pol.OnResolutionIncomplete)
 		}
 	}
 
@@ -485,6 +495,18 @@ func Evaluate(result *types.ScanResult, pol Policy, baseline *Baseline, now time
 
 	if baselineIncompatible {
 		eval.OverallDecision = higherDecision(eval.OverallDecision, DecisionReview)
+	}
+
+	// Enforce resolution completeness policy: ambiguous or unresolved dependency edges
+	// cannot silently pass as ALLOW unless on_resolution_incomplete: ALLOW is explicitly set.
+	if result != nil {
+		resComp := result.Resolution.Completeness
+		hasGraphDefects := resComp == types.ResolutionAmbiguous || len(result.Resolution.Ambiguous) > 0 || len(result.Resolution.Unresolved) > 0
+		if pol.OnResolutionIncomplete != "" && ((resComp != "" && resComp != types.ResolutionComplete) || hasGraphDefects) {
+			eval.OverallDecision = higherDecision(eval.OverallDecision, pol.OnResolutionIncomplete)
+		} else if pol.OnResolutionIncomplete == "" && hasGraphDefects {
+			eval.OverallDecision = higherDecision(eval.OverallDecision, DecisionReview)
+		}
 	}
 
 	// Incomplete, unverified, or invalid evidence always overrides finding-level ALLOW / exceptions.

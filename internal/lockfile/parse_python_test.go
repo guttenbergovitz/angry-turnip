@@ -302,3 +302,66 @@ version = "2.0.7"
 		t.Error("expected ambiguously referenced child nodes not to be falsely promoted to Direct=true")
 	}
 }
+
+func TestPythonNegativeResolutionContracts(t *testing.T) {
+	// Contract 1: Exact pin in uv.lock points to a version not present in lockfile ->
+	// must record missing_exact_dependency in Unresolved and add zero edges (even if another version exists).
+	missingPinUV := `
+version = 1
+revision = 1
+
+[[package]]
+name = "app"
+version = "1.0.0"
+dependencies = [
+    { name = "urllib3", version = "1.26.4" },
+]
+
+[[package]]
+name = "urllib3"
+version = "2.0.7"
+`
+	gPin, err := ParseUVLockGraph(strings.NewReader(missingPinUV))
+	if err != nil {
+		t.Fatalf("ParseUVLockGraph error: %v", err)
+	}
+	if app := gPin.Nodes["app@1.0.0"]; app == nil || len(app.Children) != 0 {
+		t.Errorf("expected 0 edges when exact pin 1.26.4 is missing (must NOT link to 2.0.7), got %v", app.Children)
+	}
+	if len(gPin.Unresolved) != 1 || !strings.Contains(gPin.Unresolved[0].Reason, "missing_exact_dependency") {
+		t.Errorf("expected 1 missing_exact_dependency in Unresolved, got %+v", gPin.Unresolved)
+	}
+
+	// Contract 2: Constraint in poetry.lock matches ZERO versions in lockfile (even with 1 candidate present) ->
+	// must record constraint_unsatisfied in Unresolved and add zero edges.
+	unsatisfiedPoetry := `
+[[package]]
+name = "app"
+version = "1.0.0"
+
+[package.dependencies]
+urllib3 = "==1.26.4"
+
+[[package]]
+name = "urllib3"
+version = "2.0.7"
+`
+	gUnsat, err := ParsePoetryLockGraph(strings.NewReader(unsatisfiedPoetry))
+	if err != nil {
+		t.Fatalf("ParsePoetryLockGraph error: %v", err)
+	}
+	if app := gUnsat.Nodes["app@1.0.0"]; app == nil || len(app.Children) != 0 {
+		t.Errorf("expected 0 edges when constraint ==1.26.4 is unsatisfied by 2.0.7, got %v", app.Children)
+	}
+	if len(gUnsat.Unresolved) != 1 || !strings.Contains(gUnsat.Unresolved[0].Reason, "constraint_unsatisfied") {
+		t.Errorf("expected 1 constraint_unsatisfied in Unresolved, got %+v", gUnsat.Unresolved)
+	}
+
+	// Contract 3: PEP 440 compatible release ~=1.4.5 must match 1.4.9 but reject 1.5.0.
+	if ok, sup := matchesPythonVersionSpec("1.4.9", "~=1.4.5"); !sup || !ok {
+		t.Errorf("expected 1.4.9 to satisfy ~=1.4.5, got ok=%v sup=%v", ok, sup)
+	}
+	if ok, sup := matchesPythonVersionSpec("1.5.0", "~=1.4.5"); !sup || ok {
+		t.Errorf("expected 1.5.0 to be rejected by ~=1.4.5 (<1.5.0), got ok=%v sup=%v", ok, sup)
+	}
+}
