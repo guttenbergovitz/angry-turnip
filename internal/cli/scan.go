@@ -63,42 +63,9 @@ func Scan(args []string) error {
 		}
 	}
 
-	var lockFile string
-	var lockType lockfile.LockFileType
-
-	if *customLockFile != "" {
-		lockFile = *customLockFile
-		switch lockFile {
-		case "uv.lock":
-			lockType = lockfile.UVLock
-		case "poetry.lock":
-			lockType = lockfile.PoetryLock
-		case "Pipfile.lock":
-			lockType = lockfile.PipfileLock
-		case "requirements.txt":
-			lockType = lockfile.RequirementsTxt
-		case "package-lock.json":
-			lockType = lockfile.NPMLock
-		case "yarn.lock":
-			lockType = lockfile.YarnLock
-		case "pnpm-lock.yaml":
-			lockType = lockfile.PnpmLock
-		case "Cargo.lock":
-			lockType = lockfile.CargoLock
-		case "composer.lock":
-			lockType = lockfile.ComposerLock
-		case "go.mod":
-			lockType = lockfile.GoModLock
-		default:
-			return fmt.Errorf("unsupported custom lock file: %s", lockFile)
-		}
-	} else {
-		// Find lock file automatically
-		var err error
-		lockFile, lockType, err = lockfile.FindLockFile(absPath)
-		if err != nil {
-			return fmt.Errorf("no lock file found in %s: %w\n\nSupported lock files: uv.lock, poetry.lock, Pipfile.lock, requirements.txt, package-lock.json, yarn.lock, pnpm-lock.yaml, Cargo.lock, composer.lock, go.mod", absPath, err)
-		}
+	lockFile, lockType, err := resolveLockFile(absPath, *customLockFile)
+	if err != nil {
+		return err
 	}
 
 	lockFilePath := filepath.Join(absPath, lockFile)
@@ -239,6 +206,17 @@ func handleScanResult(result *types.ScanResult, outputFmt string, finalModel *ui
 		// Print summary
 		fmt.Printf("\n󰄬 Scan complete: %d dependencies, %d vulnerabilities\n",
 			len(result.Dependencies), result.TotalVulns)
+		if result.Coverage.TotalPackages > 0 {
+			fmt.Printf("  Coverage: %d scanned, %d failed, %d skipped, %d unsupported\n",
+				result.Coverage.ScannedPackages,
+				result.Coverage.FailedPackages,
+				result.Coverage.SkippedPackages,
+				result.Coverage.UnsupportedPackages,
+			)
+		}
+		if result.Coverage.FailedPackages > 0 {
+			fmt.Printf("  ⚠️  Incomplete scan: %d package(s) failed vulnerability lookup\n", result.Coverage.FailedPackages)
+		}
 		if result.CriticalVulns > 0 {
 			fmt.Printf("  󰅚 Critical: %d\n", result.CriticalVulns)
 		}
@@ -251,10 +229,13 @@ func handleScanResult(result *types.ScanResult, outputFmt string, finalModel *ui
 		if result.LowVulns > 0 {
 			fmt.Printf("  󰌵 Low:      %d\n", result.LowVulns)
 		}
+		if result.UnknownVulns > 0 {
+			fmt.Printf("  󰌵 Unknown:  %d\n", result.UnknownVulns)
+		}
 	}
 
 	if result.CriticalVulns > 0 || result.HighVulns > 0 {
-		os.Exit(1)
+		return &ExitError{Code: 1}
 	}
 
 	return nil

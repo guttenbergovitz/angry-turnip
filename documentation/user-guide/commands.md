@@ -340,12 +340,12 @@ Requires `.vigil.cache` from previous `vigil scan` run.
 
 ## vigil ci
 
-CI/CD integration command.
+CI/CD security gate command. By default, `vigil ci` executes a fresh vulnerability scan against the current project lock file and fails if any dependency lookup fails (`--fail-on-scan-error=true`), ensuring that stale caches or API errors never produce a false green build.
 
 ### Synopsis
 
 ```bash
-vigil ci [flags]
+vigil ci [flags] [path]
 ```
 
 ### Flags
@@ -353,13 +353,18 @@ vigil ci [flags]
 - `--fail-on <level>` - Fail if vulnerabilities at or above level exist (default: `high`)
   - `low`, `medium`, `high`, `critical`
 - `--fail-on-cvss <score>` - Fail if any CVSS score ≥ threshold (0.0-10.0)
+- `--fail-on-scan-error` - Fail CI gate if any dependency fails vulnerability lookup (default: `true`)
+- `--skip-devdeps` - Skip development dependencies during scan (default: `false`)
+- `--lockfile <filename>` - Explicitly specify lock file name (e.g. `go.mod`, `package-lock.json`)
+- `--use-cache` - Evaluate `.vigil.cache` instead of running a fresh scan; strictly requires matching lock file SHA-256 hash and cache age within `--max-cache-age` (default: `false`)
+- `--max-cache-age <duration>` - Maximum allowed age of `.vigil.cache` when `--use-cache` is enabled (default: `24h`)
 - `--format <format>` - Output format (text, json, csv, markdown)
 
 ### Exit Codes
 
-- `0` - No vulnerabilities above threshold
-- `1` - Vulnerabilities found above threshold
-- `2` - Error (missing cache, invalid flags)
+- `0` - Scan completed and no vulnerabilities exceeded policy thresholds
+- `1` - Vulnerabilities found at or above configured severity or CVSS thresholds
+- `2` - Operational error (incomplete scan with `--fail-on-scan-error`, stale/expired cache, missing lock file, invalid flags)
 
 ### Examples
 

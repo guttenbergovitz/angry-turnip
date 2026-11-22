@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-22
+
+### Breaking Changes
+
+- **Fresh scans and fail-on-scan-error by default in `vigil ci`**
+  - `vigil ci` now executes a fresh vulnerability scan by default instead of trusting `.vigil.cache` without verifying lock file changes or freshness.
+  - Added `--fail-on-scan-error` (default: `true`) so incomplete scans with API lookup failures fail the CI gate (exit code `2`) rather than passing silently.
+  - Added opt-in `--use-cache` with strict SHA-256 lock file hash verification and `--max-cache-age` expiry enforcement (default: `24h`).
+- **Evidence-based runtime exploitability assessment**
+  - Replaced categorical `yes` / `no` / `conditional` exploitability values with `potentially_exploitable`, `unknown`, and `confirmed_not_affected`, accompanied by confidence level and explicit rationale.
+- **Removed temporal vulnerability filtering from security decisions**
+  - Stopped discarding vulnerabilities published before a package release date, eliminating silent false negatives when subsequent releases do not patch an earlier disclosure. Dates are retained solely as informational metadata via `ComputeTemporalMetadata`.
+- **Corrected Go `// indirect` dependency classification**
+  - Replaced line-by-line `go.mod` parsing with `golang.org/x/mod/modfile` (honouring `replace` and `exclude` directives).
+  - Separated `Direct`/`Indirect` from `Production`/`Development`: Go `// indirect` modules are now classified as `Production` transitive dependencies so `--skip-devdeps` never excludes runtime modules.
+
+### Added
+
+- **Explicit per-package scan status and coverage reporting**
+  - Added `PackageScanStatus` (`scanned`, `failed`, `skipped`, `unsupported`) and `ScanCoverage` to `types.ScanResult`.
+  - Reports (`table`, `text`, `security`) and CLI summaries now surface incomplete scan warnings when vulnerability lookups fail.
+- **`types.Unknown` severity level**
+  - Added `Unknown` severity (`"unknown"`) so vulnerabilities without severity or CVSS data are tracked explicitly in `UnknownVulns` instead of being miscounted as `Low` or assigned fabricated CVSS scores.
+- **Testable CLI exit codes**
+  - Replaced direct `os.Exit()` calls inside `internal/cli` with typed `cli.ExitError` handled centrally in `cmd/vigil/main.go`.
+
+### Fixed
+
+- **Fixed lexicographical severity comparison bug in recommendations**
+  - Replaced `severity >= types.Medium` string comparison (where `"high" >= "medium"` evaluated to `false`) with `severity.HigherOrEqualThan(types.Medium)` in `internal/report/recommendations.go`.
+- **Fixed TUI/report vulnerability mismatch**
+  - Emitted `reporter.Vulnerability()` events only after final vulnerability processing so TUI live output matches the final `ScanResult`.
+- **Updated documentation and Go version requirement**
+  - Updated `README.md` (`Go 1.27+`), `documentation/user-guide/commands.md`, and `documentation/user-guide/reports.md` to reflect actual guarantees and en-GB terminology.
+
 ## [1.6.0] - 2026-11-21
 
 ### Fixed
@@ -236,6 +271,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release gate recommendations
 - CI/CD integration with configurable failure thresholds
 
-[Unreleased]: https://github.com/guttenbergovitz/vigil-cli/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/guttenbergovitz/vigil-cli/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.0.0
+[1.6.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v1.6.0
 [1.1.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v1.1.0
 [1.0.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v1.0.0

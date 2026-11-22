@@ -19,22 +19,24 @@ const (
 	ReleaseBlock               ReleaseGate = "❌ Release must be blocked until fixes are applied"
 )
 
-// VulnEntry represents a processed vulnerability entry for the report
+// VulnEntry represents a processed vulnerability entry for the report.
 type VulnEntry struct {
-	Library             string
-	Version             string
-	Environment         string
-	VulnID              string
-	Severity            types.Severity
-	CVSS                float64
-	CVSSVector          string
-	ExploitType         ExploitType
-	Exploitability      RuntimeExploitability
-	DependencyPath      string
-	TechnicalSummary    string
-	FixStatus           string
-	RecommendedAction   RecommendedAction
-	OperationalRiskNote string
+	Library                  string
+	Version                  string
+	Environment              string
+	VulnID                   string
+	Severity                 types.Severity
+	CVSS                     float64
+	CVSSVector               string
+	ExploitType              ExploitType
+	Exploitability           RuntimeExploitability
+	ExploitabilityConfidence string
+	ExploitabilityRationale  string
+	DependencyPath           string
+	TechnicalSummary         string
+	FixStatus                string
+	RecommendedAction        RecommendedAction
+	OperationalRiskNote      string
 }
 
 // Security generates a production-ready security report
@@ -68,7 +70,20 @@ func writeHeader(out io.Writer, result *types.ScanResult) {
 	fmt.Fprintf(out, "Project:      %s\n", result.ProjectPath)
 	fmt.Fprintf(out, "Scan Date:    %s\n", result.ScannedAt.Format(time.RFC3339))
 	fmt.Fprintf(out, "Lock File:    %s\n", result.LockFile)
-	fmt.Fprintf(out, "Dependencies: %d\n\n", len(result.Dependencies))
+	fmt.Fprintf(out, "Dependencies: %d\n", len(result.Dependencies))
+	if result.Coverage.TotalPackages > 0 {
+		fmt.Fprintf(out, "Coverage:     %d scanned, %d failed, %d skipped, %d unsupported (total %d)\n",
+			result.Coverage.ScannedPackages,
+			result.Coverage.FailedPackages,
+			result.Coverage.SkippedPackages,
+			result.Coverage.UnsupportedPackages,
+			result.Coverage.TotalPackages,
+		)
+	}
+	if result.Coverage.FailedPackages > 0 {
+		fmt.Fprintf(out, "WARNING:      Incomplete scan — %d package(s) failed vulnerability lookup; absence of findings is not proof of safety.\n", result.Coverage.FailedPackages)
+	}
+	fmt.Fprintf(out, "\n")
 }
 
 func writeExecutiveSummary(out io.Writer, result *types.ScanResult, entries []VulnEntry) {
@@ -90,22 +105,25 @@ func writeExecutiveSummary(out io.Writer, result *types.ScanResult, entries []Vu
 	if result.LowVulns > 0 {
 		fmt.Fprintf(out, "  LOW:      %d\n", result.LowVulns)
 	}
+	if result.UnknownVulns > 0 {
+		fmt.Fprintf(out, "  UNKNOWN:  %d\n", result.UnknownVulns)
+	}
 	fmt.Fprintf(out, "\n")
 
-	// Count production-exploitable
-	prodExploitable := 0
+	// Count potentially exploitable in production
+	prodPotentiallyExploitable := 0
 	devOnly := 0
 	for _, entry := range entries {
-		if entry.Environment == "production" && entry.Exploitability == ExploitableYes {
-			prodExploitable++
+		if entry.Environment == "production" && entry.Exploitability == ExploitabilityPotentiallyExploitable {
+			prodPotentiallyExploitable++
 		}
 		if entry.Environment == "dev" || entry.Environment == "test" {
 			devOnly++
 		}
 	}
 
-	fmt.Fprintf(out, "Production-Exploitable Findings: %d\n", prodExploitable)
-	fmt.Fprintf(out, "Dev/Test-Only Findings:          %d\n", devOnly)
+	fmt.Fprintf(out, "Potentially Exploitable (Production): %d\n", prodPotentiallyExploitable)
+	fmt.Fprintf(out, "Dev/Test-Only Findings:               %d\n", devOnly)
 	fmt.Fprintf(out, "\n")
 
 	// Immediate release blockers
@@ -124,8 +142,8 @@ func writeVulnerabilityDetails(out io.Writer, bySeverity map[types.Severity][]Vu
 	fmt.Fprintf(out, "2. VULNERABILITIES GROUPED BY SEVERITY\n")
 	fmt.Fprintf(out, "═══════════════════════════════════════════════════════════════════════════════\n\n")
 
-	// Process in order: CRITICAL, HIGH, MEDIUM, LOW
-	severityOrder := []types.Severity{types.Critical, types.High, types.Medium, types.Low}
+	// Process in order: CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN
+	severityOrder := []types.Severity{types.Critical, types.High, types.Medium, types.Low, types.Unknown}
 
 	for _, severity := range severityOrder {
 		entries, ok := bySeverity[severity]
@@ -151,7 +169,10 @@ func writeVulnerabilityDetails(out io.Writer, bySeverity map[types.Severity][]Vu
 				fmt.Fprintf(out, "\n")
 			}
 			fmt.Fprintf(out, "Exploit Type:          %s\n", entry.ExploitType)
-			fmt.Fprintf(out, "Runtime Exploitability: %s\n", entry.Exploitability)
+			fmt.Fprintf(out, "Runtime Exploitability: %s (confidence: %s)\n", entry.Exploitability, entry.ExploitabilityConfidence)
+			if entry.ExploitabilityRationale != "" {
+				fmt.Fprintf(out, "Evidence Rationale:    %s\n", wrapText(entry.ExploitabilityRationale, 78))
+			}
 			if entry.DependencyPath != "" {
 				fmt.Fprintf(out, "Dependency Path:       %s\n", entry.DependencyPath)
 			}
@@ -246,24 +267,26 @@ func processVulnerabilities(result *types.ScanResult) []VulnEntry {
 			}
 
 			exploitType := ClassifyExploitType(vuln)
-			exploitability := AssessRuntimeExploitability(vuln, exploitType)
-			action := DetermineRecommendedAction(vuln, dep.Type, exploitType, exploitability)
+			assessment := AssessRuntimeExploitability(vuln, exploitType)
+			action := DetermineRecommendedAction(vuln, dep.Type, exploitType, assessment)
 
 			entry := VulnEntry{
-				Library:             dep.Name,
-				Version:             dep.Version,
-				Environment:         env,
-				VulnID:              getVulnID(vuln),
-				Severity:            vuln.Severity,
-				CVSS:                vuln.CVSSScore,
-				CVSSVector:          vuln.CVSSVector,
-				ExploitType:         exploitType,
-				Exploitability:      exploitability,
-				DependencyPath:      fmt.Sprintf("%s@%s", dep.Name, dep.Version),
-				TechnicalSummary:    sanitizeSummary(vuln.Summary, vuln.Description),
-				FixStatus:           "No fix yet", // TODO: implement fix detection
-				RecommendedAction:   action,
-				OperationalRiskNote: generateOperationalNote(vuln, dep.Type, exploitType, exploitability),
+				Library:                  dep.Name,
+				Version:                  dep.Version,
+				Environment:              env,
+				VulnID:                   getVulnID(vuln),
+				Severity:                 types.NormaliseSeverity(vuln.Severity),
+				CVSS:                     vuln.CVSSScore,
+				CVSSVector:               vuln.CVSSVector,
+				ExploitType:              exploitType,
+				Exploitability:           assessment.Status,
+				ExploitabilityConfidence: assessment.Confidence,
+				ExploitabilityRationale:  assessment.Rationale,
+				DependencyPath:           fmt.Sprintf("%s@%s", dep.Name, dep.Version),
+				TechnicalSummary:         sanitizeSummary(vuln.Summary, vuln.Description),
+				FixStatus:                "No fix yet", // TODO: implement fix detection
+				RecommendedAction:        action,
+				OperationalRiskNote:      generateOperationalNote(vuln, dep.Type, exploitType, assessment),
 			}
 
 			entries = append(entries, entry)
@@ -407,23 +430,26 @@ func sanitizeSummary(summary, description string) string {
 	return "No description available"
 }
 
-func generateOperationalNote(vuln types.Vulnerability, depType types.DependencyType, exploitType ExploitType, exploitability RuntimeExploitability) string {
+func generateOperationalNote(vuln types.Vulnerability, depType types.DependencyType, exploitType ExploitType, assessment ExploitabilityAssessment) string {
 	var parts []string
 
 	if depType == types.Production {
-		parts = append(parts, "Affects production code")
+		parts = append(parts, "Affects production dependency")
 	} else {
 		parts = append(parts, "Dev/test dependency only")
 	}
 
 	if exploitType == ExploitRCE || exploitType == ExploitInjection {
-		parts = append(parts, "potentially internet-exposed")
+		parts = append(parts, "high-impact vulnerability class")
 	}
 
-	if exploitability == ExploitableYes {
-		parts = append(parts, "high likelihood of exploitation")
-	} else if exploitability == ExploitableConditional {
-		parts = append(parts, "exploitable under specific conditions")
+	switch assessment.Status {
+	case ExploitabilityPotentiallyExploitable:
+		parts = append(parts, "potentially exploitable pending reachability and exposure verification")
+	case ExploitabilityConfirmedNotAffected:
+		parts = append(parts, "confirmed not affected")
+	default:
+		parts = append(parts, "runtime exploitability unknown without reachability evidence")
 	}
 
 	return strings.Join(parts, ", ") + "."

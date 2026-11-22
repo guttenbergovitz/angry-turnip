@@ -2,25 +2,22 @@ package report
 
 import "github.com/guttenbergovitz/vigil-cli/internal/types"
 
-// FilterByLevel filters scan results to show only vulns at or above specified level
+// FilterByLevel filters scan results to show only vulnerabilities at or above the specified level.
 func FilterByLevel(result *types.ScanResult, level string) *types.ScanResult {
-	minSev, ok := types.SeverityMap[level]
+	minSev, ok := types.ParseSeverity(level)
 	if !ok {
 		return result
 	}
 
 	filtered := &types.ScanResult{
-		Version:       result.Version,
-		ProjectPath:   result.ProjectPath,
-		ScannedAt:     result.ScannedAt,
-		LockFile:      result.LockFile,
-		LockFileHash:  result.LockFileHash,
-		Dependencies:  make([]types.Dependency, 0),
-		TotalVulns:    0,
-		CriticalVulns: 0,
-		HighVulns:     0,
-		MediumVulns:   0,
-		LowVulns:      0,
+		Version:      result.Version,
+		ProjectPath:  result.ProjectPath,
+		ScannedAt:    result.ScannedAt,
+		LockFile:     result.LockFile,
+		LockFileHash: result.LockFileHash,
+		Dependencies: make([]types.Dependency, 0),
+		Coverage:     result.Coverage,
+		SecretCount:  result.SecretCount,
 	}
 
 	for _, dep := range result.Dependencies {
@@ -35,10 +32,9 @@ func FilterByLevel(result *types.ScanResult, level string) *types.ScanResult {
 			dep.Vulnerabilities = filteredVulns
 			filtered.Dependencies = append(filtered.Dependencies, dep)
 
-			// Recount vulnerabilities
 			for _, vuln := range filteredVulns {
 				filtered.TotalVulns++
-				switch vuln.Severity {
+				switch types.NormaliseSeverity(vuln.Severity) {
 				case types.Critical:
 					filtered.CriticalVulns++
 				case types.High:
@@ -47,6 +43,8 @@ func FilterByLevel(result *types.ScanResult, level string) *types.ScanResult {
 					filtered.MediumVulns++
 				case types.Low:
 					filtered.LowVulns++
+				default:
+					filtered.UnknownVulns++
 				}
 			}
 		}

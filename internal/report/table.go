@@ -8,28 +8,30 @@ import (
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
 
-// Table generates a compact tabular report similar to Trivy
+// Table generates a compact tabular report.
 func Table(result *types.ScanResult, out io.Writer) error {
+	if result.Coverage.FailedPackages > 0 {
+		fmt.Fprintf(out, "⚠️  Incomplete scan: %d of %d package(s) failed vulnerability lookup\n",
+			result.Coverage.FailedPackages, result.Coverage.TotalPackages)
+	}
+
 	if result.TotalVulns == 0 {
+		if result.Coverage.FailedPackages > 0 {
+			fmt.Fprintf(out, "No vulnerabilities reported for scanned packages, but scan coverage is incomplete.\n")
+			return nil
+		}
 		fmt.Fprintf(out, "✓ No vulnerabilities found\n")
 		return nil
 	}
 
-	// Process vulnerabilities
 	entries := processVulnerabilities(result)
-
-	// Group by severity for colored output
 	bySeverity := groupBySeverity(entries)
-
-	// Determine release gate
 	gate, gateReasons := determineReleaseGate(result, entries)
 
-	// Print header
 	fmt.Fprintf(out, "\n")
 	writeTableHeader(out)
 
-	// Print vulnerabilities in severity order
-	severityOrder := []types.Severity{types.Critical, types.High, types.Medium, types.Low}
+	severityOrder := []types.Severity{types.Critical, types.High, types.Medium, types.Low, types.Unknown}
 	first := true
 
 	for _, severity := range severityOrder {
@@ -55,34 +57,32 @@ func Table(result *types.ScanResult, out io.Writer) error {
 }
 
 func writeTableHeader(out io.Writer) {
-	fmt.Fprintf(out, "%-25s │ %-20s │ %-10s │ %-15s │ %-15s │ %-12s │ %s\n",
+	fmt.Fprintf(out, "%-25s │ %-20s │ %-10s │ %-15s │ %-23s │ %-12s │ %s\n",
 		"Library", "Vuln ID", "Severity", "Exploit Type", "Exploitability", "Fix Available", "Recommended Action")
 	fmt.Fprintf(out, "%s┼%s┼%s┼%s┼%s┼%s┼%s\n",
 		strings.Repeat("─", 26),
 		strings.Repeat("─", 22),
 		strings.Repeat("─", 12),
 		strings.Repeat("─", 17),
-		strings.Repeat("─", 17),
+		strings.Repeat("─", 25),
 		strings.Repeat("─", 14),
 		strings.Repeat("─", 30))
 }
 
 func writeTableRow(out io.Writer, entry VulnEntry) {
-	// Truncate long values
 	library := truncate(entry.Library+"@"+entry.Version, 24)
 	vulnID := truncate(entry.VulnID, 19)
-	severity := colorSeverity(entry.Severity)
+	severity := colourSeverity(entry.Severity)
 	exploitType := truncate(string(entry.ExploitType), 14)
-	exploitability := truncate(string(entry.Exploitability), 14)
+	exploitability := truncate(string(entry.Exploitability), 23)
 	fixStatus := truncate(entry.FixStatus, 11)
 	action := truncate(string(entry.RecommendedAction), 28)
 
-	// Add environment indicator for dev deps
 	if entry.Environment == "dev" {
 		library = library + " (dev)"
 	}
 
-	fmt.Fprintf(out, "%-25s │ %-20s │ %-10s │ %-15s │ %-15s │ %-12s │ %s\n",
+	fmt.Fprintf(out, "%-25s │ %-20s │ %-10s │ %-15s │ %-23s │ %-12s │ %s\n",
 		library, vulnID, severity, exploitType, exploitability, fixStatus, action)
 }
 
@@ -92,7 +92,6 @@ func writeTableSummary(out io.Writer, result *types.ScanResult, entries []VulnEn
 	fmt.Fprintf(out, "SUMMARY\n")
 	fmt.Fprintf(out, "═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════\n\n")
 
-	// Total findings
 	fmt.Fprintf(out, "Total Findings: %d", result.TotalVulns)
 	if result.CriticalVulns > 0 {
 		fmt.Fprintf(out, "  │  🔴 CRITICAL: %d", result.CriticalVulns)
@@ -106,21 +105,22 @@ func writeTableSummary(out io.Writer, result *types.ScanResult, entries []VulnEn
 	if result.LowVulns > 0 {
 		fmt.Fprintf(out, "  │  🔵 LOW: %d", result.LowVulns)
 	}
+	if result.UnknownVulns > 0 {
+		fmt.Fprintf(out, "  │  ⚪ UNKNOWN: %d", result.UnknownVulns)
+	}
 	fmt.Fprintf(out, "\n\n")
 
-	// Production exploitable count
-	prodExploitable := 0
+	prodPotential := 0
 	for _, entry := range entries {
-		if entry.Environment == "production" && entry.Exploitability == ExploitableYes {
-			prodExploitable++
+		if entry.Environment == "production" && entry.Exploitability == ExploitabilityPotentiallyExploitable {
+			prodPotential++
 		}
 	}
 
-	if prodExploitable > 0 {
-		fmt.Fprintf(out, "⚠️  Production-Exploitable: %d findings require immediate attention\n", prodExploitable)
+	if prodPotential > 0 {
+		fmt.Fprintf(out, "⚠️  Potentially Exploitable (Production): %d finding(s) require reachability review\n", prodPotential)
 	}
 
-	// Release gate
 	fmt.Fprintf(out, "\n%s\n", gate)
 	if len(reasons) > 0 {
 		for _, reason := range reasons {
@@ -131,8 +131,8 @@ func writeTableSummary(out io.Writer, result *types.ScanResult, entries []VulnEn
 	fmt.Fprintf(out, "\n")
 }
 
-func colorSeverity(severity types.Severity) string {
-	switch severity {
+func colourSeverity(severity types.Severity) string {
+	switch types.NormaliseSeverity(severity) {
 	case types.Critical:
 		return "CRITICAL"
 	case types.High:
@@ -142,7 +142,7 @@ func colorSeverity(severity types.Severity) string {
 	case types.Low:
 		return "LOW"
 	default:
-		return strings.ToUpper(string(severity))
+		return "UNKNOWN"
 	}
 }
 

@@ -26,11 +26,11 @@ vigil report
 - **Multi-ecosystem SCA scanning** - JavaScript/TypeScript, Python, Rust, PHP, Go, and Java projects
 - **Secret Scanning** - Detect hardcoded AWS keys, GitHub tokens, Slack webhooks, SSH keys, and DB credentials using regex and Shannon entropy analysis
 - **Software Bill of Materials (SBOM)** - Export industry-standard **CycloneDX v1.5** and **SPDX v2.3** JSON formats
-- **License Compliance** - Categorize licenses into Permissive (MIT, Apache) vs Copyleft (GPL, AGPL) risk levels
+- **Licence Compliance** - Categorise licences into Permissive (MIT, Apache) vs Copyleft (GPL, AGPL) risk levels
 - **Container & IaC Security** - Audit Dockerfiles and GitHub Actions workflows for security misconfigurations
 - **Remote repository scanning** - Scan GitHub, Bitbucket, and other git repositories directly without cloning manually
 - **Full dependency chain tracking** - Shows complete vulnerability paths for all supported lock file types
-- **Temporal filtering** - Eliminates 30-40% false positives by filtering vulnerabilities published before package release
+- **Explicit scan coverage & error reporting** - Tracks `scanned`, `failed`, `skipped`, and `unsupported` packages so API failures are never disguised as zero vulnerabilities
 - **Multi-source CVSS enrichment** - Aggregates scores from NVD, GitHub Security Advisories, and OSV
 - **Interactive DevSecOps TUI Dashboard** - Productivity-focused single-pane dashboard with 5 security domains (`[1-5]`), detail expansion (`[Enter]`), quick actions (`[y]` copy, `[x]` mark fixed), visual severity badges, search (`[/]`), and export formats (`[e]`). Smart default: Critical+High filter. See [TUI User Guide](documentation/user-guide/tui.md).
 - **Comprehensive CVE data** - Titles, descriptions, publication dates, and dependency paths
@@ -40,12 +40,12 @@ vigil report
   - **CycloneDX / SPDX**: Industry-standard SBOM export formats (JSON)
   - **Text**: Tree-structured detailed view
   - **CSV / Markdown / JSON**: Export formats for integration
-- **Intelligent risk assessment** - Exploit type classification and runtime exploitability analysis
-- **Release gate decisions** - Automated recommendations (proceed/mitigate/block)
+- **Evidence-based exploitability assessment** - Distinguishes `potentially_exploitable`, `unknown`, and `confirmed_not_affected` with explicit rationale instead of categorical assumptions
+- **Fresh CI/CD security gate** - `vigil ci` runs a fresh scan by default and fails on incomplete scan coverage (`--fail-on-scan-error`)
 
 ## Requirements
 
-- Go 1.24+ (if building from source)
+- Go 1.27+ (if building from source)
 - Project with a supported lock file (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `uv.lock`, `poetry.lock`, `Pipfile.lock`, `requirements.txt`, `Cargo.lock`, `composer.lock`, `go.mod`, `pom.xml`, or `gradle.lockfile`)
 
 ## Installation

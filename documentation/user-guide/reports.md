@@ -7,9 +7,10 @@ Guide to interpreting Vigil output.
 | Level    | CVSS Score | Description | Typical Action |
 |----------|------------|-------------|----------------|
 | CRITICAL | 9.0-10.0   | Immediate exploitation risk | Hotfix required |
-| HIGH     | 7.0-8.9    | Significant security impact | Fix next release |
+| HIGH     | 7.0-8.9    | Significant security impact | Review / fix next release |
 | MEDIUM   | 4.0-6.9    | Moderate security risk | Plan remediation |
 | LOW      | 0.1-3.9    | Minor security concern | Monitor, fix when convenient |
+| UNKNOWN  | N/A        | Severity not reported by advisory | Manual review required |
 
 ## Exploit Types
 
@@ -46,20 +47,18 @@ Guide to interpreting Vigil output.
 
 ## Exploitability Assessment
 
-**yes**
-- Vulnerability is exploitable in typical deployments
-- Network-accessible attack vector
-- Low complexity, no privileges required
+Static lock file analysis cannot prove runtime reachability or deployment exposure on its own. Vigil therefore reports evidence-based exploitability states with explicit rationale rather than categorical `yes`/`no` claims:
 
-**conditional**
-- Exploitation requires specific conditions
-- Depends on application configuration
-- May require user interaction
+**potentially_exploitable**
+- Advisory signals (such as CVSS `AV:N` network attack vector or `AC:L` low attack complexity) indicate potential exposure
+- Confidence is low until call-graph reachability and deployment configuration are verified
 
-**no**
-- Exploitation unlikely in production
-- Requires local access or specific setup
-- Theoretical or proof-of-concept only
+**unknown**
+- Available advisory metadata does not establish runtime reachability or deployment exposure
+- Manual triage is required to confirm impact
+
+**confirmed_not_affected**
+- Verified evidence demonstrates that the vulnerable code path is not affected in this deployment
 
 ## Recommended Actions
 
@@ -164,51 +163,22 @@ Vigil enriches CVSS from multiple authoritative sources:
 
 Source priority ensures accurate risk assessment.
 
-## Temporal False Positive Filtering
+## Temporal Metadata
 
-Vigil automatically filters vulnerabilities published before package release dates, eliminating 30-40% of false positives.
-
-**How it works:**
-
-A vulnerability cannot affect a package version if the CVE was published before the package was released.
-
-**Example:**
-
-```
-lodash@4.17.20 released on 2020-02-20
-CVE-2021-23337 published on 2021-02-15
-→ Vulnerability is REAL (published after release)
-
-lodash@4.17.20 released on 2020-02-20
-CVE-2019-12345 published on 2019-01-15
-→ Vulnerability is FALSE POSITIVE (published before release)
-```
-
-**Conservative approach:**
-
-If release date or CVE publish date is unavailable, the vulnerability is included (better to over-report than miss real issues).
-
-**Impact:**
-
-- Reduces noise in reports by 30-40%
-- Improves signal-to-noise ratio for security teams
-- No false negatives (conservative filtering)
-
-Release dates are fetched from npm registry during scan.
+Package release dates and advisory publication dates are retained strictly as informational metadata. Vigil does **not** filter or discard vulnerabilities published before a package release date, because an unpatched vulnerability disclosed prior to a release can still affect subsequent releases until fixed.
 
 ## Production vs Development Dependencies
 
 **Production dependencies:**
-- Included in final application bundle
-- Run in production environment
+- Included in final application bundle or runtime module graph
+- In Go (`go.mod`), both direct and `// indirect` requirements are classified as production dependencies (`// indirect` indicates a transitive dependency, not a development-only dependency)
 - Higher risk priority
 
 **Development dependencies:**
-- Build tools, test frameworks
-- Not in production bundle
-- Lower risk priority (but still scanned)
+- Build tools and test frameworks explicitly scoped to development/test
+- Lower risk priority (still scanned by default)
 
-Use `--skip-devdeps` to focus on production risks.
+Use `--skip-devdeps` to exclude development-scoped dependencies.
 
 ## Risk Scoring
 

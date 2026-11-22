@@ -13,9 +13,18 @@ func Text(result *types.ScanResult, out io.Writer) error {
 	fmt.Fprintf(out, "Project: %s\n", result.ProjectPath)
 	fmt.Fprintf(out, "Scanned: %s\n", result.ScannedAt.Format(time.RFC3339))
 	fmt.Fprintf(out, "Lock file: %s\n", result.LockFile)
-	fmt.Fprintf(out, "Dependencies scanned: %d\n\n", len(result.Dependencies))
+	fmt.Fprintf(out, "Dependencies scanned: %d\n", len(result.Dependencies))
+	if result.Coverage.FailedPackages > 0 {
+		fmt.Fprintf(out, "WARNING: Incomplete scan (%d of %d package(s) failed vulnerability lookup)\n",
+			result.Coverage.FailedPackages, result.Coverage.TotalPackages)
+	}
+	fmt.Fprintf(out, "\n")
 
 	if result.TotalVulns == 0 {
+		if result.Coverage.FailedPackages > 0 {
+			fmt.Fprintf(out, "No vulnerabilities reported for scanned packages, but scan coverage is incomplete.\n")
+			return nil
+		}
 		fmt.Fprintf(out, "✓ No vulnerabilities found\n")
 		return nil
 	}
@@ -33,6 +42,9 @@ func Text(result *types.ScanResult, out io.Writer) error {
 	}
 	if result.LowVulns > 0 {
 		fmt.Fprintf(out, "  🔵 Low: %d\n", result.LowVulns)
+	}
+	if result.UnknownVulns > 0 {
+		fmt.Fprintf(out, "  ⚪ Unknown: %d\n", result.UnknownVulns)
 	}
 	fmt.Fprintf(out, "\n")
 
