@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-11-22
+
+### Added
+
+- **Hardened Dependency Resolution across Python, Maven, and Go (`internal/lockfile`)**
+  - Added `ParsePoetryLockGraph` preserving transitive `[package.dependencies]` edges, BFS depth, and Poetry 1.5+ `groups = ["dev"]` / `["test"]` classification.
+  - Updated `ParseRequirementsTxt` to accept only exact pinned versions (`==` / `===`) in `Production` while recording unpinned or floating-range specifications (`>=`, `~=`, bare names) in `Unresolved` (`StatusUnsupported`).
+  - Added `ParsePomXmlFile` resolving inherited `<properties>` and `<dependencyManagement>` across local multi-module Maven `<parent>` hierarchies (`<relativePath>` or `../pom.xml` up to 5 ancestor levels).
+  - Updated `ParseGoModGraph` to flag local filesystem `replace` directives (without an upstream module version) as `StatusUnsupported` rather than querying OSV with a placeholder version.
+- **SARIF 2.1.0 Output (`--format sarif` / `--output sarif`)**
+  - Added `policy.WriteSARIF` (`internal/policy/sarif.go`) mapping canonical `FindingDecision` outcomes (`BLOCK` -> `error`, `REVIEW` -> `warning`, `ALLOW` -> `note`), `EvidenceState`, PURL, CISA KEV, FIRST EPSS (with `epss_date`), and `EffectiveScoreReason` for GitHub Code Scanning.
+- **Empirical Live Benchmark Report (`benchmarks/reference/RESULTS.md`)**
+  - Executed and documented live multi-ecosystem comparison against Trivy across `npm`, `go`, `maven`, `python`, `cargo`, and `composer` (100% ground-truth recall across all 6 ecosystems; exact finding count parity on `npm`, `go`, and `composer`; full `uv.lock` and `PARTIAL` Maven BOM accounting).
+
+### Fixed
+
+- **Clean Machine-Readable Stdout in `vigil scan --no-tui --output <fmt>`**
+  - Suppressed the human `"Scanning..."` banner on `stdout` when `--output` is set so machine-readable JSON, SARIF, CycloneDX, SPDX, CSV, and Markdown streams are never corrupted.
+
 ## [2.5.0] - 2026-11-22
 
 ### Added

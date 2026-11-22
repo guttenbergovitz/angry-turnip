@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
 	"github.com/guttenbergovitz/vigil-cli/internal/policy"
+	"github.com/guttenbergovitz/vigil-cli/internal/scan"
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
 
@@ -22,10 +26,11 @@ type expectedFixture struct {
 	KnownHistoricalCVEs []expectedCVE `json:"known_historical_cves"`
 }
 
-// scannerRun captures both the execution state and normalized (CVE|PURL) finding keys.
+// scannerRun captures the execution state, total canonical finding count, and normalized (ID|PURL) keys.
 type scannerRun struct {
-	Status   string          // "OK", "FAILED", "N/A"
-	Findings map[string]bool // canonical "<CVE>|<PURL>" or "<ID>|<PURL>"
+	Status        string          // "OK", "OK(COMPLETE)", "OK(PARTIAL)", "FAILED", "N/A"
+	TotalFindings int             // Deduplicated finding count reported by the scanner
+	Findings      map[string]bool // canonical "<CVE>|<PURL>" or "<ID>|<PURL>" (including aliases)
 }
 
 func main() {
@@ -68,7 +73,7 @@ func main() {
 }
 
 func formatScore(run scannerRun, expected map[string]bool) string {
-	if run.Status != "OK" {
+	if !strings.HasPrefix(run.Status, "OK") {
 		return run.Status
 	}
 	hits := 0
@@ -77,7 +82,11 @@ func formatScore(run scannerRun, expected map[string]bool) string {
 			hits++
 		}
 	}
-	return fmt.Sprintf("OK (rec %d/%d, tot %d)", hits, len(expected), len(run.Findings))
+	tot := run.TotalFindings
+	if tot == 0 {
+		tot = len(run.Findings)
+	}
+	return fmt.Sprintf("%s (rec %d/%d, tot %d)", run.Status, hits, len(expected), tot)
 }
 
 func runVigil(fixtureDir string) scannerRun {
@@ -90,26 +99,30 @@ func runVigil(fixtureDir string) scannerRun {
 		return scannerRun{Status: "FAILED"}
 	}
 
-	// Execute `vigil scan --no-tui --output json` first; then evaluate canonical findings.
-	scanCmd := exec.Command("go", "run", "./cmd/vigil", "scan", "--no-tui", "--output", "json", tmpDir)
-	out, err := scanCmd.Output()
+	lockFile, lockType, err := lockfile.FindLockFile(tmpDir)
 	if err != nil {
-		// Exit code 1 indicates vulnerabilities were found (valid scan completion); check JSON payload.
-		if len(out) == 0 {
-			return scannerRun{Status: "FAILED"}
-		}
-	}
-
-	var result types.ScanResult
-	if json.Unmarshal(out, &result) != nil {
 		return scannerRun{Status: "FAILED"}
 	}
-	state, _ := policy.ValidateEvidence(&result)
-	if state == policy.EvidenceInvalid || state == policy.EvidenceUnverified {
+	lockFilePath := filepath.Join(tmpDir, lockFile)
+	lockHash, err := lockfile.HashFile(lockFilePath)
+	if err != nil {
+		return scannerRun{Status: "FAILED"}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	result, err := scan.Scan(ctx, tmpDir, lockFile, lockType, lockHash, lockFilePath, false, nil)
+	if err != nil || result == nil {
+		return scannerRun{Status: "FAILED"}
+	}
+
+	state, _ := policy.ValidateEvidence(result)
+	if state == policy.EvidenceInvalid || state == policy.EvidenceUnverified || result.Coverage.FailedPackages > 0 {
 		return scannerRun{Status: "FAILED(" + string(state) + ")"}
 	}
 
-	findings := policy.BuildFindings(&result)
+	findings := policy.BuildFindings(result)
 	keys := make(map[string]bool, len(findings))
 	for _, f := range findings {
 		for _, k := range f.AllKeys() {
@@ -119,7 +132,7 @@ func runVigil(fixtureDir string) scannerRun {
 			}
 		}
 	}
-	return scannerRun{Status: "OK", Findings: keys}
+	return scannerRun{Status: "OK(" + string(state) + ")", TotalFindings: len(findings), Findings: keys}
 }
 
 func runOSVScanner(fixtureDir string, eco types.Ecosystem) scannerRun {

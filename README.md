@@ -130,15 +130,15 @@ vigil report --filter high
 # Fail build on high/critical vulnerabilities (fresh scan by default)
 vigil ci --fail-on high
 
-# Enforce declarative YAML policy with baseline delta
+# Enforce declarative YAML policy with baseline delta (text, JSON, or SARIF 2.1.0)
 vigil baseline .
-vigil ci --policy vigil.yaml --baseline .vigil.baseline.json
+vigil ci --policy vigil.yaml --baseline .vigil.baseline.json --format sarif
 
 # Explain why a specific vulnerability triggered ALLOW, REVIEW, or BLOCK
 vigil explain CVE-2026-0001 --policy vigil.yaml --baseline .vigil.baseline.json
 ```
 
-See [Commands Reference](documentation/user-guide/commands.md) for all options.
+See [Commands Reference](documentation/user-guide/commands.md) for all options and [Empirical Benchmark Results](benchmarks/reference/RESULTS.md) for side-by-side accuracy validation against Trivy across all six ecosystems.
 
 ## Environment Variables & API Keys
 
@@ -217,11 +217,11 @@ Circular dependency graphs are traversed safely without infinite loops via BFS d
 ## Lock File Support
 
 - **JavaScript / TypeScript**: `package-lock.json` (npm), `yarn.lock` (Yarn), `pnpm-lock.yaml` (pnpm)
-- **Python**: `uv.lock` (uv), `poetry.lock` (Poetry), `Pipfile.lock` (Pipenv), `requirements.txt` (pip)
+- **Python**: `uv.lock` (uv — full transitive graph), `poetry.lock` (Poetry — full transitive graph, `category` & `groups`), `Pipfile.lock` (Pipenv), `requirements.txt` (pip — pinned `==`/`===` versions; unpinned/range entries flagged as `unsupported`)
 - **Rust**: `Cargo.lock` (Cargo)
 - **PHP**: `composer.lock` (Composer)
-- **Go**: `go.mod` (Go modules via `golang.org/x/mod/modfile`)
-- **Java / Kotlin**: `pom.xml` (Maven — direct declarations, local `<properties>` and `<dependencyManagement>`; versions inherited from external parent POMs/BOMs are reported as `unsupported`), `gradle.lockfile` (Gradle)
+- **Go**: `go.mod` (Go modules via `golang.org/x/mod/modfile`, supporting `replace` and `exclude`; local filesystem replacements flagged as `unsupported`)
+- **Java / Kotlin**: `pom.xml` (Maven — direct declarations, local `<properties>`, `<dependencyManagement>`, and local multi-module `<parent>` inheritance up to 5 ancestor levels; external parent/BOM versions reported as `unsupported`), `gradle.lockfile` (Gradle)
 
 ## Contributing
 

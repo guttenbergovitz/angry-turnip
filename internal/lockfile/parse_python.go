@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
@@ -51,7 +52,20 @@ func ParseUVLockGraph(r io.Reader) (*types.DependencyGraph, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse uv.lock graph: %w", err)
 	}
+	return buildPythonGraph(pkgs), nil
+}
 
+// ParsePoetryLockGraph parses poetry.lock and builds a DependencyGraph preserving transitive
+// [package.dependencies] edges and dev/main category or group classification.
+func ParsePoetryLockGraph(r io.Reader) (*types.DependencyGraph, error) {
+	pkgs, err := parsePoetryLockPackages(r)
+	if err != nil {
+		return nil, fmt.Errorf("parse poetry.lock graph: %w", err)
+	}
+	return buildPythonGraph(pkgs), nil
+}
+
+func buildPythonGraph(pkgs []pythonPackage) *types.DependencyGraph {
 	graph := types.NewDependencyGraph()
 	graph.Ecosystem = types.EcosystemPyPI
 
@@ -59,7 +73,7 @@ func ParseUVLockGraph(r io.Reader) (*types.DependencyGraph, error) {
 	for _, pkg := range pkgs {
 		name := strings.ToLower(pkg.Name)
 		depType := types.Production
-		if pkg.Dev {
+		if pkg.Dev || pkg.Category == "dev" {
 			depType = types.Development
 		}
 		graph.AddNode(name, pkg.Version, depType, false)
@@ -70,7 +84,6 @@ func ParseUVLockGraph(r io.Reader) (*types.DependencyGraph, error) {
 		parentKey := strings.ToLower(pkg.Name) + "@" + pkg.Version
 		for _, depName := range pkg.DepNames {
 			depNameLower := strings.ToLower(depName)
-			// Find installed version in graph
 			for childKey, childNode := range graph.Nodes {
 				if childNode.Name == depNameLower {
 					graph.AddEdge(parentKey, childKey)
@@ -94,9 +107,10 @@ func ParseUVLockGraph(r io.Reader) (*types.DependencyGraph, error) {
 			graph.Root = append(graph.Root, key)
 		}
 	}
+	sort.Strings(graph.Root)
 
 	graph.CalculateDepths()
-	return graph, nil
+	return graph
 }
 
 // parseUVLockPackages parses TOML content of uv.lock line by line.
@@ -242,6 +256,14 @@ func parsePoetryLockPackages(r io.Reader) ([]pythonPackage, error) {
 			current.Version = extractStringValue(line)
 		} else if strings.HasPrefix(line, "category = \"") {
 			current.Category = extractStringValue(line)
+			if current.Category == "dev" {
+				current.Dev = true
+			}
+		} else if strings.HasPrefix(line, "groups = [") {
+			// Poetry 1.5+ uses groups = ["dev"] / ["test"] instead of category = "dev"
+			if !strings.Contains(line, "\"main\"") && (strings.Contains(line, "\"dev\"") || strings.Contains(line, "\"test\"")) {
+				current.Dev = true
+			}
 		}
 	}
 
@@ -292,15 +314,22 @@ func ParsePipfileLock(r io.Reader) (*Dependencies, error) {
 	return deps, nil
 }
 
-var reqSpecRegex = regexp.MustCompile(`^([a-zA-Z0-9_\-\.]+)(?:[=><~!]=?([a-zA-Z0-9_\-\.\+]+))?`)
+var (
+	reqPinnedRegex = regexp.MustCompile(`^([a-zA-Z0-9_\-\.]+)(?:\[[a-zA-Z0-9_\-\.,\s]+\])?\s*===?\s*([a-zA-Z0-9_\-\.\+]+)$`)
+	reqNameRegex   = regexp.MustCompile(`^([a-zA-Z0-9_\-\.]+)`)
+)
 
 // ParseRequirementsTxt parses requirements.txt format into Dependencies.
+// Only exact pinned versions (== or ===) are recorded in Production; unpinned or
+// range-constrained entries (>=, ~=, >, <, !=, or bare package names) are recorded in
+// Unresolved so scan coverage accurately flags non-deterministic requirements.
 func ParseRequirementsTxt(r io.Reader) (*Dependencies, error) {
 	scanner := bufio.NewScanner(r)
 	deps := &Dependencies{
 		Production:  make(map[string]string),
 		Development: make(map[string]string),
 	}
+	unresolvedSet := make(map[string]bool)
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -309,7 +338,10 @@ func ParseRequirementsTxt(r io.Reader) (*Dependencies, error) {
 			continue
 		}
 
-		// Strip inline comments or options (e.g. ; python_version... or --hash...)
+		// Strip inline comments or environment markers / hashes
+		if idx := strings.Index(line, " #"); idx >= 0 {
+			line = strings.TrimSpace(line[:idx])
+		}
 		if idx := strings.Index(line, ";"); idx >= 0 {
 			line = strings.TrimSpace(line[:idx])
 		}
@@ -317,21 +349,36 @@ func ParseRequirementsTxt(r io.Reader) (*Dependencies, error) {
 			line = strings.TrimSpace(line[:idx])
 		}
 
-		matches := reqSpecRegex.FindStringSubmatch(line)
-		if len(matches) >= 2 {
+		if matches := reqPinnedRegex.FindStringSubmatch(line); len(matches) == 3 {
 			pkgName := strings.ToLower(matches[1])
-			pkgVer := ""
-			if len(matches) >= 3 {
-				pkgVer = matches[2]
-			}
-			if pkgName != "" {
+			pkgVer := strings.TrimSpace(matches[2])
+			if pkgName != "" && pkgVer != "" {
 				deps.Production[pkgName] = pkgVer
+				delete(unresolvedSet, pkgName)
+			}
+			continue
+		}
+
+		if matches := reqNameRegex.FindStringSubmatch(line); len(matches) >= 2 {
+			pkgName := strings.ToLower(matches[1])
+			if pkgName != "" {
+				if _, ok := deps.Production[pkgName]; !ok {
+					unresolvedSet[pkgName] = true
+				}
 			}
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("parse requirements.txt: %w", err)
+	}
+
+	if len(unresolvedSet) > 0 {
+		deps.Unresolved = make([]string, 0, len(unresolvedSet))
+		for pkg := range unresolvedSet {
+			deps.Unresolved = append(deps.Unresolved, pkg)
+		}
+		sort.Strings(deps.Unresolved)
 	}
 
 	return deps, nil

@@ -1,8 +1,10 @@
 package policy
 
 import (
+	"bytes"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -859,5 +861,17 @@ func TestSourceEvidencePreservedThroughMerge(t *testing.T) {
 	}
 	if f.EffectiveScoreReason == "" {
 		t.Error("expected non-empty EffectiveScoreReason explaining conservative max selection")
+	}
+}
+
+func TestWriteSARIFMapsDecisionsAndProvenance(t *testing.T) {
+	eval := Evaluate(sampleScanResult(), DefaultPolicy(), nil, time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC))
+	var buf bytes.Buffer
+	if err := WriteSARIF(&buf, "go.mod", eval); err != nil {
+		t.Fatalf("WriteSARIF error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, `"version": "2.1.0"`) || !strings.Contains(out, `"level": "error"`) || !strings.Contains(out, `"level": "warning"`) {
+		t.Errorf("expected SARIF 2.1.0 output with error and warning levels, got:\n%s", out)
 	}
 }

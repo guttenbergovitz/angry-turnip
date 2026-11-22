@@ -10,9 +10,10 @@ import (
 )
 
 type goPackage struct {
-	Name       string
-	Version    string
-	IsIndirect bool
+	Name           string
+	Version        string
+	IsIndirect     bool
+	IsLocalReplace bool
 }
 
 // ParseGoMod parses a Go go.mod file into Dependencies using golang.org/x/mod/modfile.
@@ -32,6 +33,10 @@ func ParseGoMod(r io.Reader) (*Dependencies, error) {
 	}
 
 	for _, pkg := range pkgs {
+		if pkg.IsLocalReplace {
+			deps.Unresolved = append(deps.Unresolved, pkg.Name)
+			continue
+		}
 		deps.Production[pkg.Name] = pkg.Version
 	}
 
@@ -41,6 +46,7 @@ func ParseGoMod(r io.Reader) (*Dependencies, error) {
 // ParseGoModGraph parses a Go go.mod file and builds a DependencyGraph with Go ecosystem metadata.
 // Direct and indirect requirements are distinguished via DependencyNode.Direct while keeping
 // DependencyNode.Type as Production, because go.mod does not separate build/dev scopes.
+// Modules replaced by a local filesystem directory (no upstream version) are marked StatusUnsupported.
 func ParseGoModGraph(r io.Reader) (*types.DependencyGraph, error) {
 	pkgs, err := parseGoModPackages(r)
 	if err != nil {
@@ -52,7 +58,15 @@ func ParseGoModGraph(r io.Reader) (*types.DependencyGraph, error) {
 
 	for _, pkg := range pkgs {
 		direct := !pkg.IsIndirect
-		node := graph.AddNode(pkg.Name, pkg.Version, types.Production, direct)
+		ver := pkg.Version
+		if pkg.IsLocalReplace {
+			ver = ""
+		}
+		node := graph.AddNode(pkg.Name, ver, types.Production, direct)
+		if pkg.IsLocalReplace {
+			node.ScanStatus = types.StatusUnsupported
+			node.ScanError = "local filesystem replace directive (no upstream module version)"
+		}
 		if direct {
 			graph.Root = append(graph.Root, node.Name+"@"+node.Version)
 		}
@@ -109,14 +123,21 @@ func parseGoModPackages(r io.Reader) ([]goPackage, error) {
 			continue
 		}
 
-		// Apply replace directives when the target is a versioned module.
+		// Apply replace directives when the target is a versioned module; mark local filesystem
+		// replacements (where rep.Version == "") so they are reported as unsupported rather than
+		// queried under a placeholder version.
+		localReplace := false
 		if rep, ok := replaceExact[mod]; ok {
 			if rep.Version != "" {
 				mod = rep
+			} else {
+				localReplace = true
 			}
 		} else if rep, ok := replacePath[mod.Path]; ok {
 			if rep.Version != "" {
 				mod = rep
+			} else {
+				localReplace = true
 			}
 		}
 
@@ -127,9 +148,10 @@ func parseGoModPackages(r io.Reader) ([]goPackage, error) {
 		seen[key] = true
 
 		pkgs = append(pkgs, goPackage{
-			Name:       mod.Path,
-			Version:    mod.Version,
-			IsIndirect: req.Indirect,
+			Name:           mod.Path,
+			Version:        mod.Version,
+			IsIndirect:     req.Indirect,
+			IsLocalReplace: localReplace,
 		})
 	}
 

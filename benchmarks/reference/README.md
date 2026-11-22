@@ -29,3 +29,5 @@ Uses `benchmarks/reference/cmd/compare` to normalize each scanner's output to ca
 ```bash
 bash benchmarks/reference/compare.sh
 ```
+
+See [RESULTS.md](RESULTS.md) for the empirical live benchmark comparison between Vigil and Trivy across all six ecosystems.

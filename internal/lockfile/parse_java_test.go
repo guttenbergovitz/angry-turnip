@@ -119,3 +119,63 @@ func TestParsePomXmlDependencyManagementAndUnresolved(t *testing.T) {
 		t.Errorf("expected unresolved spring-boot-starter-web, got %v", deps.Unresolved)
 	}
 }
+
+func TestParsePomXmlFileMultiModuleParentInheritance(t *testing.T) {
+	rootDir := t.TempDir()
+	childDir := filepath.Join(rootDir, "service-a")
+	if err := os.MkdirAll(childDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	parentPom := `<?xml version="1.0" encoding="UTF-8"?>
+<project>
+  <groupId>com.example</groupId>
+  <artifactId>root-parent</artifactId>
+  <version>1.0.0</version>
+  <properties>
+    <netty.version>4.1.94.Final</netty.version>
+  </properties>
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-handler</artifactId>
+        <version>${netty.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+</project>`
+
+	childPom := `<?xml version="1.0" encoding="UTF-8"?>
+<project>
+  <parent>
+    <groupId>com.example</groupId>
+    <artifactId>root-parent</artifactId>
+    <version>1.0.0</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+  <artifactId>service-a</artifactId>
+  <dependencies>
+    <dependency>
+      <groupId>io.netty</groupId>
+      <artifactId>netty-handler</artifactId>
+    </dependency>
+  </dependencies>
+</project>`
+
+	if err := os.WriteFile(filepath.Join(rootDir, "pom.xml"), []byte(parentPom), 0644); err != nil {
+		t.Fatal(err)
+	}
+	childPomPath := filepath.Join(childDir, "pom.xml")
+	if err := os.WriteFile(childPomPath, []byte(childPom), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps, err := ParsePomXmlFile(childPomPath)
+	if err != nil {
+		t.Fatalf("ParsePomXmlFile error: %v", err)
+	}
+	if got := deps.Production["io.netty:netty-handler"]; got != "4.1.94.Final" {
+		t.Errorf("expected child POM to inherit netty-handler 4.1.94.Final from parent, got %q (unresolved=%v)", got, deps.Unresolved)
+	}
+}

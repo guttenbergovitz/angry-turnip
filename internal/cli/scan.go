@@ -96,11 +96,9 @@ func Scan(args []string) error {
 		model.SetCancelFunc(cancel) // Allow early quit to cancel scan
 		program = tea.NewProgram(model, tea.WithAltScreen())
 		reporter = &TUIAdapter{program: program}
-	} else {
-		// In non-TUI mode, use a simple stdout reporter or nil
-		// For now, we'll just print "Scanning..." as in original code
+	} else if *outputFmt == "" {
+		// Only print human status banner when machine-readable --output is not requested.
 		fmt.Println("Scanning...")
-		// We could implement a StdoutReporter here if needed
 	}
 
 	// Start full-spectrum scan (SCA + Secrets + IaC + Licenses + Policy Evaluation) in goroutine
@@ -212,6 +210,11 @@ func handleScanResult(result *types.ScanResult, outputFmt string, finalModel *ui
 			}
 		case "spdx":
 			if err := export.SPDX(result, os.Stdout); err != nil {
+				return err
+			}
+		case "sarif":
+			eval := policy.Evaluate(result, policy.DefaultPolicy(), nil, time.Now().UTC())
+			if err := policy.WriteSARIF(os.Stdout, result.LockFile, eval); err != nil {
 				return err
 			}
 		default:

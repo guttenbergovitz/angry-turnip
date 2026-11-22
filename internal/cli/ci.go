@@ -212,7 +212,7 @@ func CI(args []string) error {
 	eval := policy.Evaluate(result, pol, baseline, time.Now().UTC())
 
 	if *policyPath != "" {
-		if err := renderPolicyCIOutput(os.Stdout, eval, *format); err != nil {
+		if err := renderPolicyCIOutput(os.Stdout, eval, *format, result.LockFile); err != nil {
 			return err
 		}
 	} else {
@@ -237,11 +237,14 @@ func CI(args []string) error {
 	return nil
 }
 
-func renderPolicyCIOutput(out io.Writer, eval policy.EvaluationResult, format string) error {
+func renderPolicyCIOutput(out io.Writer, eval policy.EvaluationResult, format, lockFile string) error {
 	if format == "json" {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
 		return enc.Encode(eval)
+	}
+	if format == "sarif" {
+		return policy.WriteSARIF(out, lockFile, eval)
 	}
 	fmt.Fprintf(out, "CI Policy Decision: %s (Evidence: %s)\n", eval.OverallDecision, eval.EvidenceState)
 	fmt.Fprintf(out, "Findings: %d blocked, %d review, %d allowed (%d accepted risk, %d expired exception(s))\n",
@@ -292,6 +295,8 @@ func renderCIOutput(out io.Writer, result *types.ScanResult, outcome CIGateOutco
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
 		return enc.Encode(outcome.Evaluation)
+	case "sarif":
+		return policy.WriteSARIF(out, result.LockFile, outcome.Evaluation)
 	case "csv":
 		return export.CSV(result, out)
 	case "markdown":

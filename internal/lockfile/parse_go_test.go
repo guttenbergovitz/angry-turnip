@@ -133,3 +133,25 @@ func TestParseGoModInvalid(t *testing.T) {
 		t.Fatal("expected error for invalid go.mod, got nil")
 	}
 }
+
+func TestParseGoModLocalPathReplaceMarkedUnsupported(t *testing.T) {
+	content := `module example.com/app
+
+go 1.24.0
+
+require (
+	example.com/localmod v0.0.0
+	github.com/gin-gonic/gin v1.9.0
+)
+
+replace example.com/localmod => ../localmod
+`
+	graph, err := ParseGoModGraph(strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("ParseGoModGraph error: %v", err)
+	}
+	localNode := graph.Nodes["example.com/localmod@"]
+	if localNode == nil || localNode.ScanStatus != types.StatusUnsupported {
+		t.Errorf("expected local filesystem replace module to be StatusUnsupported, got %+v", localNode)
+	}
+}

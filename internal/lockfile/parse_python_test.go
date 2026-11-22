@@ -3,6 +3,7 @@ package lockfile
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
@@ -141,5 +142,61 @@ func TestParseRequirementsTxt(t *testing.T) {
 	}
 	if deps.Production["gunicorn"] != "20.1.0" {
 		t.Errorf("expected gunicorn 20.1.0, got %s", deps.Production["gunicorn"])
+	}
+}
+
+func TestParsePoetryLockGraphAndGroups(t *testing.T) {
+	content := `
+[[package]]
+name = "flask"
+version = "2.3.2"
+groups = ["main"]
+
+[package.dependencies]
+werkzeug = ">=2.3.3"
+
+[[package]]
+name = "werkzeug"
+version = "2.3.6"
+groups = ["main"]
+
+[[package]]
+name = "pytest"
+version = "7.4.0"
+groups = ["dev"]
+`
+	graph, err := ParsePoetryLockGraph(strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("ParsePoetryLockGraph error: %v", err)
+	}
+	flask := graph.Nodes["flask@2.3.2"]
+	werkzeug := graph.Nodes["werkzeug@2.3.6"]
+	pytest := graph.Nodes["pytest@7.4.0"]
+	if flask == nil || !flask.Direct || flask.Type != types.Production {
+		t.Errorf("expected flask as direct production node, got %+v", flask)
+	}
+	if werkzeug == nil || werkzeug.Direct || werkzeug.Depth != 1 {
+		t.Errorf("expected werkzeug as transitive depth-1 node, got %+v", werkzeug)
+	}
+	if pytest == nil || pytest.Type != types.Development {
+		t.Errorf("expected pytest with groups=[\"dev\"] as Development, got %+v", pytest)
+	}
+}
+
+func TestParseRequirementsTxtFlagsUnpinnedAsUnresolved(t *testing.T) {
+	content := `
+requests==2.31.0
+urllib3>=1.26.0
+flask
+`
+	deps, err := ParseRequirementsTxt(strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("ParseRequirementsTxt error: %v", err)
+	}
+	if deps.Production["requests"] != "2.31.0" {
+		t.Errorf("expected pinned requests==2.31.0, got %q", deps.Production["requests"])
+	}
+	if len(deps.Unresolved) != 2 || deps.Unresolved[0] != "flask" || deps.Unresolved[1] != "urllib3" {
+		t.Errorf("expected unpinned/range entries [flask urllib3] in Unresolved, got %v", deps.Unresolved)
 	}
 }

@@ -85,12 +85,10 @@ func (s *Scanner) Scan(ctx context.Context, absPath, lockFile string, lockType l
 			return nil, err
 		}
 	case lockfile.PoetryLock:
-		var deps *lockfile.Dependencies
-		deps, err = lockfile.ParsePoetryLock(lockf)
+		graph, err = lockfile.ParsePoetryLockGraph(lockf)
 		if err = parseLockFile("poetry.lock", err); err != nil {
 			return nil, err
 		}
-		graph = buildGraphFromDeps(deps, lockType.Ecosystem())
 	case lockfile.PipfileLock:
 		var deps *lockfile.Dependencies
 		deps, err = lockfile.ParsePipfileLock(lockf)
@@ -122,7 +120,7 @@ func (s *Scanner) Scan(ctx context.Context, absPath, lockFile string, lockType l
 		}
 	case lockfile.PomXml:
 		var deps *lockfile.Dependencies
-		deps, err = lockfile.ParsePomXml(lockf)
+		deps, err = lockfile.ParsePomXmlFile(lockFilePath)
 		if err = parseLockFile("pom.xml", err); err != nil {
 			return nil, err
 		}
