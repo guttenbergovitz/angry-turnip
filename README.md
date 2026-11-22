@@ -41,6 +41,9 @@ vigil report
   - **Text**: Tree-structured detailed view
   - **CSV / Markdown / JSON**: Export formats for integration
 - **Evidence-based exploitability assessment** - Distinguishes `potentially_exploitable`, `unknown`, and `confirmed_not_affected` with explicit rationale instead of categorical assumptions
+- **Explainable security decisions (`vigil explain`)** - Explains why a vulnerability is `ALLOW`, `REVIEW`, or `BLOCK`, which policy rule matched, and what evidence is missing
+- **Baseline & delta analysis (`vigil baseline`)** - Tracks newly introduced, existing, and resolved vulnerabilities against an accepted baseline snapshot
+- **Policy as Code (`--policy`)** - Declarative YAML rules with owned, time-bounded exceptions (`expires_at`) enforced deterministically in `vigil ci`
 - **Fresh CI/CD security gate** - `vigil ci` runs a fresh scan by default and fails on incomplete scan coverage (`--fail-on-scan-error`)
 
 ## Requirements
@@ -124,8 +127,15 @@ vigil report --filter high
 ### CI/CD Integration
 
 ```bash
-# Fail build on high/critical vulnerabilities
+# Fail build on high/critical vulnerabilities (fresh scan by default)
 vigil ci --fail-on high
+
+# Enforce declarative YAML policy with baseline delta
+vigil baseline .
+vigil ci --policy vigil.yaml --baseline .vigil.baseline.json
+
+# Explain why a specific vulnerability triggered ALLOW, REVIEW, or BLOCK
+vigil explain CVE-2026-0001 --policy vigil.yaml --baseline .vigil.baseline.json
 ```
 
 See [Commands Reference](documentation/user-guide/commands.md) for all options.

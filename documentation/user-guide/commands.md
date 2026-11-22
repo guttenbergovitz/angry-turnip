@@ -358,6 +358,8 @@ vigil ci [flags] [path]
 - `--lockfile <filename>` - Explicitly specify lock file name (e.g. `go.mod`, `package-lock.json`)
 - `--use-cache` - Evaluate `.vigil.cache` instead of running a fresh scan; strictly requires matching lock file SHA-256 hash and cache age within `--max-cache-age` (default: `false`)
 - `--max-cache-age <duration>` - Maximum allowed age of `.vigil.cache` when `--use-cache` is enabled (default: `24h`)
+- `--policy <file>` - Path to a declarative YAML policy-as-code file (evaluates `ALLOW`/`REVIEW`/`BLOCK` rules and time-bounded exceptions)
+- `--baseline <file>` - Path to a `.vigil.baseline.json` snapshot for delta evaluation (`new_only` rules)
 - `--format <format>` - Output format (text, json, csv, markdown)
 
 ### Exit Codes
@@ -395,6 +397,48 @@ script:
 
 # Jenkins
 sh 'vigil ci --fail-on high'
+```
+
+---
+
+## vigil explain
+
+Explain why a specific vulnerability is allowed, flagged for manual review, or blocked, including matched policy rules, provenance, and missing evidence.
+
+### Synopsis
+
+```bash
+vigil explain <vuln-id> [path] [flags]
+```
+
+### Flags
+
+- `--policy <file>` - Path to YAML policy file (defaults to Vigil's built-in policy)
+- `--baseline <file>` - Path to baseline JSON file for delta context
+- `--format <format>` - Output format (`text`, `json`)
+
+### Example
+
+```bash
+vigil explain CVE-2026-0001 . --policy vigil.yaml --baseline .vigil.baseline.json
+```
+
+---
+
+## vigil baseline
+
+Write a deterministic JSON baseline snapshot of current findings from `.vigil.cache` for future delta analysis.
+
+### Synopsis
+
+```bash
+vigil baseline [path] [--output <file>]
+```
+
+### Example
+
+```bash
+vigil baseline . --output .vigil.baseline.json
 ```
 
 ---

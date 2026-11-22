@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-22
+
+### Added
+
+- **Canonical Finding Model (`internal/policy`)**
+  - Added `policy.Finding` normalising vulnerability identity (CVE + aliases), advisory provenance, dependency scope, evidence-based exploitability, and an explicit `MissingEvidence` list (such as call-graph reachability and runtime deployment exposure).
+- **Baseline & Delta Analysis (`vigil baseline`)**
+  - Added `vigil baseline [path] [--output <file>]` to generate deterministic `.vigil.baseline.json` snapshots and `policy.ComputeDelta` to classify findings as new, existing, or resolved.
+- **Declarative Policy as Code (`--policy`)**
+  - Added typed YAML policy evaluation (`ALLOW`, `REVIEW`, `BLOCK`) with `min_severity`, `match_severity`, `min_cvss`, `production_only`, and `new_only` rules.
+  - Added time-bounded, owned exceptions (`id`, `package`, `owner`, `reason`, `expires_at`) with automatic expiry enforcement and audit reasoning.
+  - Integrated `--policy` and `--baseline` flags into `vigil ci`.
+- **Explainable Release Gate (`vigil explain <vuln-id>`)**
+  - Added `vigil explain` command (`text` and `json` output) detailing the decision, matched rule, step-by-step reasoning, and missing evidence for any vulnerability.
+- **Architecture Decision Record**
+  - Added [ADR 013](documentation/adr/013-explainable-policy-decisions.md) documenting the canonical finding model, baseline delta, and policy-as-code boundary.
+
 ## [2.1.0] - 2026-11-22
 
 ### Added
@@ -302,7 +319,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release gate recommendations
 - CI/CD integration with configurable failure thresholds
 
-[Unreleased]: https://github.com/guttenbergovitz/vigil-cli/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/guttenbergovitz/vigil-cli/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.2.0
 [2.1.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.1.0
 [2.0.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.0.0
 [1.6.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v1.6.0

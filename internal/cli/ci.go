@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/guttenbergovitz/vigil-cli/internal/export"
 	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
+	"github.com/guttenbergovitz/vigil-cli/internal/policy"
 	"github.com/guttenbergovitz/vigil-cli/internal/scan"
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
@@ -94,6 +96,8 @@ func CI(args []string) error {
 	customLockFile := fs.String("lockfile", "", "Explicitly specify lock file name (e.g. go.mod, package-lock.json)")
 	useCache := fs.Bool("use-cache", false, "Evaluate .vigil.cache instead of running a fresh scan (requires matching lock file hash and fresh timestamp)")
 	maxCacheAge := fs.Duration("max-cache-age", 24*time.Hour, "Maximum allowed age of .vigil.cache when --use-cache is enabled")
+	policyPath := fs.String("policy", "", "Path to YAML policy-as-code file (overrides threshold flags)")
+	baselinePath := fs.String("baseline", "", "Path to baseline JSON file for delta evaluation")
 	format := fs.String("format", "text", "Output format (text, csv, markdown, json)")
 
 	if err := fs.Parse(args); err != nil {
@@ -151,6 +155,34 @@ func CI(args []string) error {
 		}
 	}
 
+	if *policyPath != "" {
+		pol, err := policy.LoadPolicy(*policyPath)
+		if err != nil {
+			return err
+		}
+		if pol.FailOnScanError == nil {
+			pol.FailOnScanError = failOnScanError
+		}
+		var baseline *policy.Baseline
+		if *baselinePath != "" {
+			baseline, err = policy.LoadBaseline(*baselinePath)
+			if err != nil {
+				return err
+			}
+		}
+		eval := policy.Evaluate(result, pol, baseline, time.Now().UTC())
+		if err := renderPolicyCIOutput(os.Stdout, eval, *format); err != nil {
+			return err
+		}
+		if eval.ScanIncomplete && (pol.FailOnScanError == nil || *pol.FailOnScanError) {
+			return &ExitError{Code: 2}
+		}
+		if eval.OverallDecision == policy.DecisionBlock || eval.OverallDecision == policy.DecisionReview {
+			return &ExitError{Code: 1}
+		}
+		return nil
+	}
+
 	outcome := EvaluateCIGate(result, CIGateOptions{
 		MinSeverity:     minSev,
 		FailOnCVSS:      *failOnCVSS,
@@ -165,6 +197,21 @@ func CI(args []string) error {
 		return &ExitError{Code: outcome.ExitCode}
 	}
 
+	return nil
+}
+
+func renderPolicyCIOutput(out io.Writer, eval policy.EvaluationResult, format string) error {
+	if format == "json" {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(eval)
+	}
+	fmt.Fprintf(out, "CI Policy Decision: %s\n", eval.OverallDecision)
+	fmt.Fprintf(out, "Findings: %d blocked, %d review, %d allowed (%d suppressed, %d expired exception(s))\n",
+		eval.BlockCount, eval.ReviewCount, eval.AllowCount, eval.SuppressedCount, eval.ExpiredExceptions)
+	if eval.ScanIncomplete {
+		fmt.Fprintf(out, "✗ Scan incomplete: %d package(s) failed vulnerability lookup\n", eval.FailedPackages)
+	}
 	return nil
 }
 

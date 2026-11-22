@@ -25,7 +25,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: vigil <command> [args]")
+		return fmt.Errorf("usage: vigil <scan|report|ci|explain|baseline|version> [args]")
 	}
 
 	cmd := os.Args[1]
@@ -37,6 +37,10 @@ func run() error {
 		return cli.Report(os.Args[2:])
 	case "ci":
 		return cli.CI(os.Args[2:])
+	case "explain":
+		return cli.Explain(os.Args[2:])
+	case "baseline":
+		return cli.Baseline(os.Args[2:])
 	case "version":
 		fmt.Printf("vigil %s\n", version.GetFull())
 		return nil
