@@ -11,9 +11,9 @@ import (
 )
 
 // Finding is the canonical, normalised security finding produced from scan evidence.
-// Components are uniquely identified by PURL (including ecosystem) and overlapping
-// advisory records (such as GHSA and CVE aliases for the same component) are merged
-// into a single canonical finding.
+// Components are uniquely identified by PURL (including ecosystem) and transitively
+// overlapping advisory records (such as GHSA and CVE aliases for the same component)
+// are merged into a single canonical finding independently of input ordering.
 type Finding struct {
 	Key               string                          `json:"key"`
 	ID                string                          `json:"id"`
@@ -63,15 +63,17 @@ func BuildPURL(eco types.Ecosystem, pkg, ver string) string {
 	}
 }
 
-// BuildFindings converts a ScanResult into a deterministically ordered, deduplicated slice
-// of canonical Findings. Records referring to the same component PURL with overlapping
-// advisory IDs or aliases are merged.
+// BuildFindings converts a ScanResult into a deterministically ordered, transitively
+// deduplicated slice of canonical Findings. Records referring to the same component PURL
+// with transitively overlapping advisory IDs or aliases are merged using union-find, and
+// all derived fields (ExploitType, Exploitability, MissingEvidence) are recomputed from
+// the merged canonical evidence.
 func BuildFindings(result *types.ScanResult) []Finding {
 	if result == nil {
 		return nil
 	}
 
-	raw := make([]Finding, 0, result.TotalVulns)
+	byPURL := make(map[string][]Finding)
 
 	for _, dep := range result.Dependencies {
 		purl := BuildPURL(dep.Ecosystem, dep.Name, dep.Version)
@@ -84,20 +86,14 @@ func BuildFindings(result *types.ScanResult) []Finding {
 			}
 			sev = types.NormaliseSeverity(sev)
 
-			exploitType := report.ClassifyExploitType(vuln)
-			assessment := report.AssessRuntimeExploitability(vuln, exploitType)
-
 			sources := dedupeSortedStrings(vuln.Sources)
 
-			summary := vuln.Summary
+			summary := strings.TrimSpace(vuln.Summary)
 			if summary == "" {
-				summary = vuln.CVETitle
-			}
-			if summary == "" {
-				summary = "No advisory summary available"
+				summary = strings.TrimSpace(vuln.CVETitle)
 			}
 
-			raw = append(raw, Finding{
+			byPURL[purl] = append(byPURL[purl], Finding{
 				Key:               fmt.Sprintf("%s|%s", primaryID, purl),
 				ID:                primaryID,
 				Aliases:           aliases,
@@ -109,19 +105,25 @@ func BuildFindings(result *types.ScanResult) []Finding {
 				Direct:            dep.Direct,
 				Severity:          sev,
 				CVSSScore:         vuln.CVSSScore,
-				CVSSVector:        vuln.CVSSVector,
+				CVSSVector:        strings.TrimSpace(vuln.CVSSVector),
 				Sources:           sources,
 				PublishedAt:       vuln.PublishedAt,
 				PackageReleasedAt: dep.ReleasedAt,
-				ExploitType:       exploitType,
-				Exploitability:    assessment,
 				Summary:           summary,
-				MissingEvidence:   collectMissingEvidence(sev, vuln.CVSSScore, vuln.CVSSVector, assessment),
 			})
 		}
 	}
 
-	findings := deduplicateFindings(raw)
+	purls := make([]string, 0, len(byPURL))
+	for purl := range byPURL {
+		purls = append(purls, purl)
+	}
+	sort.Strings(purls)
+
+	findings := make([]Finding, 0)
+	for _, purl := range purls {
+		findings = append(findings, deduplicatePURLFindings(byPURL[purl])...)
+	}
 
 	sort.Slice(findings, func(i, j int) bool {
 		if findings[i].Key != findings[j].Key {
@@ -146,84 +148,180 @@ func normaliseAdvisoryIDs(id, cveID string) (string, []string) {
 	return id, nil
 }
 
-// deduplicateFindings merges findings for the same PURL that share any advisory identifier or alias.
-func deduplicateFindings(raw []Finding) []Finding {
-	merged := make([]Finding, 0, len(raw))
+// deduplicatePURLFindings partitions findings for a single PURL into connected components
+// by shared advisory IDs/aliases using union-find, ensuring transitive, permutation-invariant
+// deduplication.
+func deduplicatePURLFindings(items []Finding) []Finding {
+	n := len(items)
+	if n == 0 {
+		return nil
+	}
 
-	for _, candidate := range raw {
-		idx := -1
-		for i := range merged {
-			if merged[i].PURL == candidate.PURL && findingsOverlapAdvisory(merged[i], candidate) {
-				idx = i
-				break
+	parent := make([]int, n)
+	for i := range parent {
+		parent[i] = i
+	}
+
+	var find func(int) int
+	find = func(x int) int {
+		for parent[x] != x {
+			parent[x] = parent[parent[x]]
+			x = parent[x]
+		}
+		return x
+	}
+	union := func(a, b int) {
+		ra, rb := find(a), find(b)
+		if ra != rb {
+			if ra < rb {
+				parent[rb] = ra
+			} else {
+				parent[ra] = rb
 			}
 		}
-		if idx == -1 {
-			merged = append(merged, candidate)
-		} else {
-			merged[idx] = mergeFindings(merged[idx], candidate)
+	}
+
+	idToFirst := make(map[string]int)
+	for i, item := range items {
+		for _, id := range item.allAdvisoryIDs() {
+			key := strings.ToLower(strings.TrimSpace(id))
+			if key == "" {
+				continue
+			}
+			if prev, exists := idToFirst[key]; exists {
+				union(i, prev)
+			} else {
+				idToFirst[key] = i
+			}
 		}
+	}
+
+	groups := make(map[int][]Finding)
+	for i, item := range items {
+		root := find(i)
+		groups[root] = append(groups[root], item)
+	}
+
+	merged := make([]Finding, 0, len(groups))
+	for _, group := range groups {
+		merged = append(merged, mergeComponentFindings(group))
 	}
 
 	return merged
 }
 
-func findingsOverlapAdvisory(a, b Finding) bool {
-	for _, idA := range a.allAdvisoryIDs() {
-		for _, idB := range b.allAdvisoryIDs() {
-			if strings.EqualFold(idA, idB) {
-				return true
-			}
+// mergeComponentFindings deterministically merges a connected component of overlapping
+// advisory records and recomputes all derived fields (ExploitType, Exploitability,
+// MissingEvidence) from the canonical merged evidence.
+func mergeComponentFindings(group []Finding) Finding {
+	// Sort members canonically first so output is strictly permutation-invariant.
+	sorted := append([]Finding(nil), group...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].ID != sorted[j].ID {
+			return sorted[i].ID < sorted[j].ID
+		}
+		if sorted[i].CVSSScore != sorted[j].CVSSScore {
+			return sorted[i].CVSSScore > sorted[j].CVSSScore
+		}
+		if sorted[i].CVSSVector != sorted[j].CVSSVector {
+			return sorted[i].CVSSVector < sorted[j].CVSSVector
+		}
+		return sorted[i].Summary < sorted[j].Summary
+	})
+
+	var allIDs []string
+	var allSources []string
+	var summaries []string
+	var publishedAt *time.Time
+	var releasedAt *time.Time
+
+	out := sorted[0]
+	out.Severity = types.Unknown
+	out.CVSSScore = 0
+	out.CVSSVector = ""
+	out.Direct = false
+	out.DependencyType = types.Development
+
+	for _, m := range sorted {
+		allIDs = append(allIDs, m.allAdvisoryIDs()...)
+		allSources = append(allSources, m.Sources...)
+		if m.Summary != "" {
+			summaries = append(summaries, m.Summary)
+		}
+		if m.Severity != types.Unknown && (out.Severity == types.Unknown || m.Severity.HigherOrEqualThan(out.Severity)) {
+			out.Severity = m.Severity
+		}
+		if m.CVSSScore > out.CVSSScore {
+			out.CVSSScore = m.CVSSScore
+			out.CVSSVector = m.CVSSVector
+		} else if m.CVSSScore == out.CVSSScore && out.CVSSVector == "" && m.CVSSVector != "" {
+			out.CVSSVector = m.CVSSVector
+		}
+		if m.PublishedAt != nil && (publishedAt == nil || m.PublishedAt.Before(*publishedAt)) {
+			t := *m.PublishedAt
+			publishedAt = &t
+		}
+		if m.PackageReleasedAt != nil && (releasedAt == nil || m.PackageReleasedAt.Before(*releasedAt)) {
+			t := *m.PackageReleasedAt
+			releasedAt = &t
+		}
+		if m.DependencyType == types.Production {
+			out.DependencyType = types.Production
+		}
+		if m.Direct {
+			out.Direct = true
 		}
 	}
-	return false
-}
 
-func mergeFindings(a, b Finding) Finding {
-	out := a
-
-	// Prefer a CVE-* primary identifier when merging GHSA and CVE records.
-	allIDs := dedupeSortedStrings(append(a.allAdvisoryIDs(), b.allAdvisoryIDs()...))
-	primary := out.ID
-	for _, id := range allIDs {
+	// Choose primary ID: lexicographically first CVE-* if present, otherwise first ID.
+	uniqueIDs := dedupeSortedStrings(allIDs)
+	primary := ""
+	for _, id := range uniqueIDs {
 		if strings.HasPrefix(strings.ToUpper(id), "CVE-") {
 			primary = id
 			break
 		}
 	}
+	if primary == "" && len(uniqueIDs) > 0 {
+		primary = uniqueIDs[0]
+	}
+
 	out.ID = primary
 	out.Aliases = nil
-	for _, id := range allIDs {
+	for _, id := range uniqueIDs {
 		if !strings.EqualFold(id, primary) {
 			out.Aliases = append(out.Aliases, id)
 		}
 	}
 	out.Key = fmt.Sprintf("%s|%s", out.ID, out.PURL)
+	out.Sources = dedupeSortedStrings(allSources)
+	out.PublishedAt = publishedAt
+	out.PackageReleasedAt = releasedAt
 
-	// Keep the higher severity and higher CVSS score.
-	if b.Severity != types.Unknown && (out.Severity == types.Unknown || b.Severity.HigherOrEqualThan(out.Severity)) {
-		out.Severity = b.Severity
-	}
-	if b.CVSSScore > out.CVSSScore {
-		out.CVSSScore = b.CVSSScore
-		if b.CVSSVector != "" {
-			out.CVSSVector = b.CVSSVector
+	// Pick canonical summary deterministically (longest non-empty, tie-broken alphabetically).
+	uniqueSummaries := dedupeSortedStrings(summaries)
+	if len(uniqueSummaries) > 0 {
+		best := uniqueSummaries[0]
+		for _, s := range uniqueSummaries[1:] {
+			if len(s) > len(best) || (len(s) == len(best) && s < best) {
+				best = s
+			}
 		}
-	} else if out.CVSSVector == "" && b.CVSSVector != "" {
-		out.CVSSVector = b.CVSSVector
+		out.Summary = best
+	} else {
+		out.Summary = "No advisory summary available"
 	}
 
-	out.Sources = dedupeSortedStrings(append(out.Sources, b.Sources...))
-	if out.Summary == "No advisory summary available" && b.Summary != "" {
-		out.Summary = b.Summary
+	// Recompute ALL derived fields from canonical merged evidence.
+	canonicalVuln := types.Vulnerability{
+		ID:         out.ID,
+		Summary:    out.Summary,
+		Severity:   out.Severity,
+		CVSSScore:  out.CVSSScore,
+		CVSSVector: out.CVSSVector,
 	}
-	if out.PublishedAt == nil && b.PublishedAt != nil {
-		out.PublishedAt = b.PublishedAt
-	}
-	if out.DependencyType != types.Production && b.DependencyType == types.Production {
-		out.DependencyType = types.Production
-	}
-	out.Direct = out.Direct || b.Direct
+	out.ExploitType = report.ClassifyExploitType(canonicalVuln)
+	out.Exploitability = report.AssessRuntimeExploitability(canonicalVuln, out.ExploitType)
 	out.MissingEvidence = collectMissingEvidence(out.Severity, out.CVSSScore, out.CVSSVector, out.Exploitability)
 
 	return out

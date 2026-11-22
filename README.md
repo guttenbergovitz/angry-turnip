@@ -197,12 +197,12 @@ Full documentation index: [documentation/README.md](documentation/README.md)
 
 Vigil enriches CVSS scores from multiple sources in priority order:
 
-1. **NVD API** (for CVE-* IDs) - Most authoritative source for CVEs
-2. **GitHub Security Advisories** (for GHSA-* IDs) - Comprehensive GHSA data
-3. **OSV API** - Community-sourced vulnerability data
-4. **Derived from severity** - Fallback calculation if unavailable
+1. **NVD API** (for `CVE-*` IDs, when `NVD_API_KEY` is configured) — authoritative CVE scores, globally rate-limited across concurrent workers
+2. **GitHub Security Advisories** (for `GHSA-*` IDs) — uses GraphQL when `GITHUB_TOKEN` is set, falling back to public REST API
+3. **OSV API** — baseline community-aggregated advisory data
+4. **Derived from known severity** — fallback approximation only when severity is explicitly known (`Unknown` severity retains CVSS `0.0` rather than fabricating a score)
 
-Ensures every vulnerability has a CVSS score for accurate risk assessment.
+Circular dependency graphs are traversed safely without infinite loops via BFS depth tracking and visited-node guards.
 
 ## Lock File Support
 

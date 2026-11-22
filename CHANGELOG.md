@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.3] - 2026-11-22
+
+### Fixed
+
+- **Cross-checked `ScanCoverage` against actual `ScanResult.Dependencies`**
+  - `policy.ValidateEvidence` now verifies that every dependency has a valid `ScanStatus`, rejects duplicate component PURLs, and rejects mismatches between reported coverage counters and actual dependency statuses.
+  - Scans where all dependencies are excluded (`ScannedPackages == 0 && SkippedPackages == TotalPackages`) now yield `EvidenceUnverified` rather than `EvidenceComplete`.
+- **Transitive, permutation-invariant advisory deduplication**
+  - Replaced greedy single-match deduplication with union-find connected-component merging per PURL in `policy.BuildFindings`, guaranteeing identical canonical findings regardless of advisory record order.
+  - Recomputed all derived fields (`ExploitType`, `Exploitability`, `MissingEvidence`) from canonical merged vulnerability evidence.
+- **Reproducible baseline scope identity**
+  - Extended `policy.ScanScope` with `ResolutionModelVersion`, sorted `ScannedPURLs` manifest, and SHA-256 `ScopeFingerprint`.
+- **Unified CI JSON output**
+  - `vigil ci --format json` now consistently emits `policy.EvaluationResult` in both threshold mode and `--policy` mode.
+- **Property tests & documentation accuracy**
+  - Added property tests for coverage consistency, permutation invariance (all 6 permutations of transitively linked advisories), merge consistency, and scope reproducibility.
+  - Updated `README.md` CVSS enrichment description and circular dependency safety note.
+
 ## [2.2.2] - 2026-11-22
 
 ### Fixed
@@ -364,7 +382,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release gate recommendations
 - CI/CD integration with configurable failure thresholds
 
-[Unreleased]: https://github.com/guttenbergovitz/vigil-cli/compare/v2.2.2...HEAD
+[Unreleased]: https://github.com/guttenbergovitz/vigil-cli/compare/v2.2.3...HEAD
+[2.2.3]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.2.3
 [2.2.2]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.2.2
 [2.2.1]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.2.1
 [2.2.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.2.0

@@ -1,6 +1,8 @@
 package policy
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,11 +13,19 @@ import (
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
 
-// ScanScope records the coverage boundaries under which a Baseline snapshot was captured.
+// CurrentResolutionModelVersion identifies the dependency resolution and PURL schema version
+// recorded in baseline snapshots for reproducibility.
+const CurrentResolutionModelVersion = 1
+
+// ScanScope records both the coverage counts and the exact component identity manifest
+// under which a Baseline snapshot was captured.
 type ScanScope struct {
-	TotalPackages   int `json:"total_packages"`
-	ScannedPackages int `json:"scanned_packages"`
-	SkippedPackages int `json:"skipped_packages"`
+	ResolutionModelVersion int      `json:"resolution_model_version"`
+	TotalPackages          int      `json:"total_packages"`
+	ScannedPackages        int      `json:"scanned_packages"`
+	SkippedPackages        int      `json:"skipped_packages"`
+	ScannedPURLs           []string `json:"scanned_purls"`
+	ScopeFingerprint       string   `json:"scope_fingerprint"`
 }
 
 // Baseline stores a verified snapshot of known finding keys and scan scope for delta analysis.
@@ -55,7 +65,7 @@ func ValidateForBaseline(result *types.ScanResult) error {
 }
 
 // BuildBaseline constructs a deterministic Baseline snapshot from a ScanResult, recording
-// the exact scan scope alongside finding keys.
+// the exact scanned PURL manifest and scope fingerprint alongside finding keys.
 func BuildBaseline(result *types.ScanResult) *Baseline {
 	findings := BuildFindings(result)
 	seen := make(map[string]bool, len(findings))
@@ -69,18 +79,39 @@ func BuildBaseline(result *types.ScanResult) *Baseline {
 	}
 	sort.Strings(keys)
 
+	purlSet := ScannedPURLSet(result)
+	scannedPURLs := make([]string, 0, len(purlSet))
+	for p := range purlSet {
+		scannedPURLs = append(scannedPURLs, p)
+	}
+	sort.Strings(scannedPURLs)
+
+	scope := ScanScope{
+		ResolutionModelVersion: CurrentResolutionModelVersion,
+		TotalPackages:          result.Coverage.TotalPackages,
+		ScannedPackages:        result.Coverage.ScannedPackages,
+		SkippedPackages:        result.Coverage.SkippedPackages,
+		ScannedPURLs:           scannedPURLs,
+		ScopeFingerprint:       computeScopeFingerprint(result.LockFile, CurrentResolutionModelVersion, result.Coverage.SkippedPackages, scannedPURLs),
+	}
+
 	return &Baseline{
 		Version:      1,
 		GeneratedAt:  time.Now().UTC(),
 		LockFile:     result.LockFile,
 		LockFileHash: result.LockFileHash,
-		Scope: ScanScope{
-			TotalPackages:   result.Coverage.TotalPackages,
-			ScannedPackages: result.Coverage.ScannedPackages,
-			SkippedPackages: result.Coverage.SkippedPackages,
-		},
-		FindingKeys: keys,
+		Scope:        scope,
+		FindingKeys:  keys,
 	}
+}
+
+func computeScopeFingerprint(lockFile string, modelVersion, skipped int, sortedScannedPURLs []string) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "lockfile=%s\nmodel=%d\nskipped=%d\n", lockFile, modelVersion, skipped)
+	for _, p := range sortedScannedPURLs {
+		fmt.Fprintf(h, "purl=%s\n", p)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // SaveBaseline writes a Baseline snapshot to disk as indented JSON.

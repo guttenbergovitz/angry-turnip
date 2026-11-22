@@ -264,9 +264,10 @@ func ParsePolicy(data []byte) (Policy, error) {
 	return pol, nil
 }
 
-// ValidateEvidence inspects scan coverage invariants and returns an independent EvidenceState.
-// Intentional scope exclusions (SkippedPackages) are reported separately from coverage failures
-// (FailedPackages and UnsupportedPackages).
+// ValidateEvidence inspects scan coverage invariants against the actual dependency list and
+// returns an independent EvidenceState. Intentional scope exclusions (SkippedPackages) are
+// reported separately from coverage failures (FailedPackages and UnsupportedPackages), while
+// zero-scanned (all-skipped) scans are treated as EvidenceUnverified rather than EvidenceComplete.
 func ValidateEvidence(result *types.ScanResult) (EvidenceState, []string) {
 	if result == nil {
 		return EvidenceInvalid, []string{"Scan result is missing."}
@@ -285,11 +286,43 @@ func ValidateEvidence(result *types.ScanResult) (EvidenceState, []string) {
 	if c.TotalPackages == 0 && sum > 0 {
 		return EvidenceInvalid, []string{"Inconsistent scan coverage: total_packages is 0 while status counters are non-zero."}
 	}
-	if c.ScannedPackages > 0 && len(result.Dependencies) == 0 {
-		return EvidenceInvalid, []string{"Inconsistent scan evidence: coverage reports scanned packages but dependency list is empty."}
-	}
 	if c.TotalPackages == 0 && len(result.Dependencies) == 0 {
 		return EvidenceUnverified, []string{"No dependencies were evaluated in this scan."}
+	}
+
+	// Cross-check actual dependency statuses and component identity uniqueness against Coverage.
+	var actualScanned, actualFailed, actualSkipped, actualUnsupported int
+	seenPURLs := make(map[string]bool, len(result.Dependencies))
+
+	for _, dep := range result.Dependencies {
+		purl := BuildPURL(dep.Ecosystem, dep.Name, dep.Version)
+		if seenPURLs[purl] {
+			return EvidenceInvalid, []string{fmt.Sprintf("Duplicate dependency identity in scan result: %s.", purl)}
+		}
+		seenPURLs[purl] = true
+
+		switch dep.ScanStatus {
+		case types.StatusScanned:
+			actualScanned++
+		case types.StatusFailed:
+			actualFailed++
+		case types.StatusSkipped:
+			actualSkipped++
+		case types.StatusUnsupported:
+			actualUnsupported++
+		default:
+			return EvidenceInvalid, []string{fmt.Sprintf("Dependency %s has unknown or missing scan status %q.", purl, dep.ScanStatus)}
+		}
+	}
+
+	if len(result.Dependencies) > c.TotalPackages {
+		return EvidenceInvalid, []string{fmt.Sprintf("Inconsistent scan coverage: %d dependencies present but total_packages is %d.",
+			len(result.Dependencies), c.TotalPackages)}
+	}
+	if actualScanned != c.ScannedPackages || actualFailed != c.FailedPackages || actualUnsupported != c.UnsupportedPackages || c.SkippedPackages < actualSkipped {
+		return EvidenceInvalid, []string{fmt.Sprintf("Scan coverage counters do not match actual dependency statuses (reported scanned=%d failed=%d unsupported=%d skipped=%d; actual scanned=%d failed=%d unsupported=%d skipped=%d).",
+			c.ScannedPackages, c.FailedPackages, c.UnsupportedPackages, c.SkippedPackages,
+			actualScanned, actualFailed, actualUnsupported, actualSkipped)}
 	}
 
 	var notes []string
@@ -305,6 +338,12 @@ func ValidateEvidence(result *types.ScanResult) (EvidenceState, []string) {
 
 	if c.FailedPackages > 0 || c.UnsupportedPackages > 0 {
 		return EvidencePartial, notes
+	}
+
+	// A scan consisting solely of scope exclusions has zero verified packages.
+	if c.ScannedPackages == 0 {
+		notes = append(notes, "Zero packages were evaluated (all dependencies were excluded from scope).")
+		return EvidenceUnverified, notes
 	}
 
 	return EvidenceComplete, notes

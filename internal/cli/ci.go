@@ -289,7 +289,9 @@ func renderCIOutput(out io.Writer, result *types.ScanResult, outcome CIGateOutco
 		}
 		return nil
 	case "json":
-		return export.JSON(result, out)
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(outcome.Evaluation)
 	case "csv":
 		return export.CSV(result, out)
 	case "markdown":

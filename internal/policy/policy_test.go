@@ -428,3 +428,181 @@ func TestBaselineSaveLoadRoundTripAndScope(t *testing.T) {
 		t.Fatalf("unexpected loaded baseline: %+v", loaded)
 	}
 }
+
+// Property 1: Coverage consistency — every dependency belongs to exactly one valid status,
+// no duplicate PURLs, counters match actual statuses, and all-skipped yields UNVERIFIED.
+func TestPropertyCoverageConsistency(t *testing.T) {
+	t.Run("more_dependencies_than_total_packages_is_invalid", func(t *testing.T) {
+		res := &types.ScanResult{
+			Coverage: types.ScanCoverage{TotalPackages: 2, ScannedPackages: 2},
+			Dependencies: []types.Dependency{
+				{Name: "a", Version: "1.0.0", Ecosystem: types.EcosystemNPM, ScanStatus: types.StatusScanned},
+				{Name: "b", Version: "1.0.0", Ecosystem: types.EcosystemNPM, ScanStatus: types.StatusScanned},
+				{Name: "c", Version: "1.0.0", Ecosystem: types.EcosystemNPM, ScanStatus: types.StatusScanned},
+			},
+		}
+		state, _ := ValidateEvidence(res)
+		if state != EvidenceInvalid {
+			t.Errorf("ValidateEvidence() = %q, want %q", state, EvidenceInvalid)
+		}
+	})
+
+	t.Run("unknown_scan_status_is_invalid", func(t *testing.T) {
+		res := &types.ScanResult{
+			Coverage: types.ScanCoverage{TotalPackages: 1, ScannedPackages: 1},
+			Dependencies: []types.Dependency{
+				{Name: "a", Version: "1.0.0", Ecosystem: types.EcosystemNPM, ScanStatus: "bogus"},
+			},
+		}
+		state, _ := ValidateEvidence(res)
+		if state != EvidenceInvalid {
+			t.Errorf("ValidateEvidence() = %q, want %q", state, EvidenceInvalid)
+		}
+	})
+
+	t.Run("duplicate_purl_is_invalid", func(t *testing.T) {
+		res := &types.ScanResult{
+			Coverage: types.ScanCoverage{TotalPackages: 2, ScannedPackages: 2},
+			Dependencies: []types.Dependency{
+				{Name: "a", Version: "1.0.0", Ecosystem: types.EcosystemNPM, ScanStatus: types.StatusScanned},
+				{Name: "a", Version: "1.0.0", Ecosystem: types.EcosystemNPM, ScanStatus: types.StatusScanned},
+			},
+		}
+		state, _ := ValidateEvidence(res)
+		if state != EvidenceInvalid {
+			t.Errorf("ValidateEvidence() = %q, want %q", state, EvidenceInvalid)
+		}
+	})
+
+	t.Run("all_skipped_zero_scanned_is_unverified_not_complete", func(t *testing.T) {
+		res := &types.ScanResult{
+			Coverage: types.ScanCoverage{TotalPackages: 1, SkippedPackages: 1},
+			Dependencies: []types.Dependency{
+				{Name: "jest", Version: "29.0.0", Ecosystem: types.EcosystemNPM, Type: types.Development, ScanStatus: types.StatusSkipped},
+			},
+		}
+		eval := Evaluate(res, DefaultPolicy(), nil, time.Now().UTC())
+		if eval.EvidenceState != EvidenceUnverified {
+			t.Errorf("EvidenceState = %q, want %q for all-skipped scan", eval.EvidenceState, EvidenceUnverified)
+		}
+		if eval.OverallDecision != DecisionBlock {
+			t.Errorf("OverallDecision = %q, want %q for all-skipped scan", eval.OverallDecision, DecisionBlock)
+		}
+	})
+}
+
+// Property 2: Permutation invariance — any ordering of transitively linked advisory records
+// (A: GHSA-1111, B: CVE-2026-1234, C: GHSA-1111 + CVE-2026-1234) produces identical output.
+func TestPropertyPermutationInvariance(t *testing.T) {
+	a := types.Vulnerability{ID: "GHSA-1111", Severity: types.Medium, Summary: "Short note", Sources: []string{"github"}}
+	b := types.Vulnerability{ID: "CVE-2026-1234", Severity: types.High, CVSSScore: 8.1, CVSSVector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N", Summary: "Remote code execution via malformed header", Sources: []string{"nvd"}}
+	c := types.Vulnerability{ID: "GHSA-1111", CVEID: "CVE-2026-1234", Severity: types.High, Sources: []string{"osv"}}
+
+	perms := [][]types.Vulnerability{
+		{a, b, c},
+		{a, c, b},
+		{b, a, c},
+		{b, c, a},
+		{c, a, b},
+		{c, b, a},
+	}
+
+	var baselineJSON string
+	for idx, perm := range perms {
+		res := &types.ScanResult{
+			Coverage: types.ScanCoverage{TotalPackages: 1, ScannedPackages: 1},
+			Dependencies: []types.Dependency{
+				{
+					Name:            "github.com/example/web",
+					Version:         "v1.2.0",
+					Ecosystem:       types.EcosystemGo,
+					Type:            types.Production,
+					ScanStatus:      types.StatusScanned,
+					Vulnerabilities: perm,
+				},
+			},
+		}
+
+		findings := BuildFindings(res)
+		if len(findings) != 1 {
+			t.Fatalf("permutation %d: expected 1 transitively merged finding, got %d", idx, len(findings))
+		}
+		raw, err := json.Marshal(findings)
+		if err != nil {
+			t.Fatalf("marshal permutation %d: %v", idx, err)
+		}
+		if idx == 0 {
+			baselineJSON = string(raw)
+		} else if string(raw) != baselineJSON {
+			t.Errorf("permutation %d produced different output:\ngot:  %s\nwant: %s", idx, raw, baselineJSON)
+		}
+	}
+}
+
+// Property 3: Merge consistency — derived ExploitType, Exploitability, and MissingEvidence
+// are recomputed from the canonical merged vulnerability data.
+func TestPropertyMergeConsistency(t *testing.T) {
+	res := &types.ScanResult{
+		Coverage: types.ScanCoverage{TotalPackages: 1, ScannedPackages: 1},
+		Dependencies: []types.Dependency{
+			{
+				Name:       "github.com/example/web",
+				Version:    "v1.2.0",
+				Ecosystem:  types.EcosystemGo,
+				Type:       types.Production,
+				ScanStatus: types.StatusScanned,
+				Vulnerabilities: []types.Vulnerability{
+					// Low-evidence record first (no vector, generic summary).
+					{ID: "GHSA-9999", Severity: types.Unknown, Summary: "Issue", Sources: []string{"github"}},
+					// Rich record second (RCE + AV:N/AC:L vector).
+					{ID: "GHSA-9999", CVEID: "CVE-2026-9999", Severity: types.Critical, CVSSScore: 9.8, CVSSVector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", Summary: "Remote code execution in parser", Sources: []string{"nvd"}},
+				},
+			},
+		},
+	}
+
+	findings := BuildFindings(res)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 merged finding, got %d", len(findings))
+	}
+	f := findings[0]
+	if f.ExploitType != "RCE" {
+		t.Errorf("ExploitType = %q, want RCE (recomputed from merged summary)", f.ExploitType)
+	}
+	if f.Exploitability.Status != "potentially_exploitable" {
+		t.Errorf("Exploitability.Status = %q, want potentially_exploitable (recomputed from merged CVSSVector)", f.Exploitability.Status)
+	}
+}
+
+// Property 4: Scope reproducibility — identical package counts over different PURLs produce
+// distinct ScopeFingerprints, while identical PURL manifests produce identical fingerprints.
+func TestPropertyScopeReproducibility(t *testing.T) {
+	resA := &types.ScanResult{
+		LockFile: "go.mod",
+		Coverage: types.ScanCoverage{TotalPackages: 1, ScannedPackages: 1},
+		Dependencies: []types.Dependency{
+			{Name: "example.com/alpha", Version: "v1.0.0", Ecosystem: types.EcosystemGo, ScanStatus: types.StatusScanned},
+		},
+	}
+	resB := &types.ScanResult{
+		LockFile: "go.mod",
+		Coverage: types.ScanCoverage{TotalPackages: 1, ScannedPackages: 1},
+		Dependencies: []types.Dependency{
+			{Name: "example.com/beta", Version: "v1.0.0", Ecosystem: types.EcosystemGo, ScanStatus: types.StatusScanned},
+		},
+	}
+
+	bA1 := BuildBaseline(resA)
+	bA2 := BuildBaseline(resA)
+	bB := BuildBaseline(resB)
+
+	if bA1.Scope.ScopeFingerprint == "" {
+		t.Fatal("expected non-empty ScopeFingerprint")
+	}
+	if bA1.Scope.ScopeFingerprint != bA2.Scope.ScopeFingerprint {
+		t.Errorf("identical scopes produced different fingerprints: %s vs %s", bA1.Scope.ScopeFingerprint, bA2.Scope.ScopeFingerprint)
+	}
+	if bA1.Scope.ScopeFingerprint == bB.Scope.ScopeFingerprint {
+		t.Errorf("different PURL manifests produced identical fingerprint: %s", bA1.Scope.ScopeFingerprint)
+	}
+}
