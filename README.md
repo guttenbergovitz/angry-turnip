@@ -140,12 +140,17 @@ vigil explain CVE-2026-0001 --policy vigil.yaml --baseline .vigil.baseline.json
 
 See [Commands Reference](documentation/user-guide/commands.md) for all options.
 
-## Environment Variables
+## Environment Variables & API Keys
 
-Optional API keys for enhanced data quality:
+Vigil works **out of the box without any API keys** using free public endpoints ([OSV.dev](https://osv.dev/) and the public GitHub Security Advisories REST API).
 
-- `NVD_API_KEY` - NVD API key for authoritative CVE data ([Get key](https://nvd.nist.gov/developers/request-an-api-key))
-- `GITHUB_TOKEN` - GitHub token for GHSA data and improved rate limits
+Both optional keys below are **100% free** and only improve enrichment coverage and rate limits:
+
+| Variable | Cost | Where to Obtain | Purpose & Rate Limits |
+|----------|------|-----------------|-----------------------|
+| `NVD_API_KEY` | **Free** (email registration) | [NIST NVD API Key Request](https://nvd.nist.gov/developers/request-an-api-key) | Enables authoritative NVD CVE enrichment (50 req / 30s, globally rate-limited). Skipped when unset. |
+| `GITHUB_TOKEN` | **Free** (GitHub account) | [GitHub Personal Access Tokens](https://github.com/settings/tokens) (no scopes needed for public advisories; read-only `repo` scope only for private git cloning) | Switches GHSA lookups from public REST (60 req/hr) to GraphQL (5,000 req/hr) and authenticates private GitHub clones via `extraheader`. |
+| `VIGIL_WORKERS` | N/A | Local setting (`1`–`100`, default `10`) | Controls concurrent package scan worker count. |
 
 ## Documentation
 
