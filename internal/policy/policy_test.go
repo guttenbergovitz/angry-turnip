@@ -606,3 +606,217 @@ func TestPropertyScopeReproducibility(t *testing.T) {
 		t.Errorf("different PURL manifests produced identical fingerprint: %s", bA1.Scope.ScopeFingerprint)
 	}
 }
+
+func TestThreatIntelPolicyRulesKEVAndEPSS(t *testing.T) {
+	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+
+	// A MEDIUM severity CVE in CISA KEV must be blocked by DefaultPolicy.
+	kevResult := &types.ScanResult{
+		LockFile: "go.mod",
+		Coverage: types.ScanCoverage{TotalPackages: 1, ScannedPackages: 1},
+		Dependencies: []types.Dependency{
+			{
+				Name:       "github.com/example/pkg",
+				Version:    "v1.0.0",
+				Ecosystem:  types.EcosystemGo,
+				Type:       types.Production,
+				Direct:     true,
+				ScanStatus: types.StatusScanned,
+				Vulnerabilities: []types.Vulnerability{
+					{
+						ID:             "CVE-2026-1001",
+						Severity:       types.Medium,
+						CVSSScore:      5.3,
+						KnownExploited: true,
+						KEVStatus:      types.EnrichmentAvailable,
+						EPSSScore:      0.82,
+						EPSSPercentile: 0.99,
+						EPSSStatus:     types.EnrichmentAvailable,
+						Sources:        []string{"osv", "cisa-kev", "epss"},
+					},
+				},
+			},
+		},
+	}
+
+	eval := Evaluate(kevResult, DefaultPolicy(), nil, now)
+	if eval.OverallDecision != DecisionBlock {
+		t.Errorf("expected CISA KEV medium finding to be BLOCKED by DefaultPolicy, got %s", eval.OverallDecision)
+	}
+	if len(eval.Decisions) != 1 || eval.Decisions[0].MatchedRule != "threat-intel/kev-block" {
+		t.Errorf("expected matched rule threat-intel/kev-block, got %+v", eval.Decisions)
+	}
+
+	// Custom EPSS rule blocks findings above min_epss.
+	epssPolicyYAML := `
+version: 1
+rules:
+  - name: high-epss-block
+    decision: BLOCK
+    min_epss: 0.5
+`
+	pol, err := ParsePolicy([]byte(epssPolicyYAML))
+	if err != nil {
+		t.Fatalf("ParsePolicy failed: %v", err)
+	}
+	evalEPSS := Evaluate(kevResult, pol, nil, now)
+	if evalEPSS.OverallDecision != DecisionBlock {
+		t.Errorf("expected EPSS 0.82 >= 0.5 to BLOCK, got %s", evalEPSS.OverallDecision)
+	}
+
+	// Out-of-range min_epss must be rejected.
+	if _, err := ParsePolicy([]byte("version: 1\nrules:\n  - name: bad\n    decision: BLOCK\n    min_epss: 1.5\n")); err == nil {
+		t.Error("expected out-of-range min_epss to fail strict YAML validation")
+	}
+}
+
+func TestThreatIntelUnavailableEscalatesOnlyWhenConfigured(t *testing.T) {
+	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	fetched := now
+	result := &types.ScanResult{
+		LockFile: "go.mod",
+		Coverage: types.ScanCoverage{TotalPackages: 1, ScannedPackages: 1},
+		ThreatIntel: types.ThreatIntelMetadata{
+			KEV:  types.SourceEnrichmentStatus{Status: types.EnrichmentFailed, FetchedAt: &fetched, Error: "network timeout"},
+			EPSS: types.SourceEnrichmentStatus{Status: types.EnrichmentFailed, FetchedAt: &fetched, Error: "network timeout"},
+		},
+		Dependencies: []types.Dependency{
+			{
+				Name:       "github.com/example/pkg",
+				Version:    "v1.0.0",
+				Ecosystem:  types.EcosystemGo,
+				Type:       types.Production,
+				Direct:     true,
+				ScanStatus: types.StatusScanned,
+				Vulnerabilities: []types.Vulnerability{
+					{
+						ID:         "CVE-2026-2002",
+						Severity:   types.Medium,
+						CVSSScore:  5.0,
+						KEVStatus:  types.EnrichmentFailed,
+						EPSSStatus: types.EnrichmentFailed,
+						Sources:    []string{"osv"},
+					},
+				},
+			},
+		},
+	}
+
+	// DefaultPolicy does not fail basic SCA when optional TI is unavailable, but records EvidenceNotes and MissingEvidence.
+	evalDefault := Evaluate(result, DefaultPolicy(), nil, now)
+	if evalDefault.OverallDecision != DecisionAllow {
+		t.Errorf("expected DefaultPolicy not to block medium vuln solely due to TI timeout, got %s", evalDefault.OverallDecision)
+	}
+	if len(evalDefault.EvidenceNotes) < 2 {
+		t.Errorf("expected EvidenceNotes to record KEV & EPSS failures, got %v", evalDefault.EvidenceNotes)
+	}
+	hasMissingKEV := false
+	for _, m := range evalDefault.Decisions[0].Finding.MissingEvidence {
+		if m == "CISA KEV lookup (failed)" {
+			hasMissingKEV = true
+		}
+	}
+	if !hasMissingKEV {
+		t.Errorf("expected MissingEvidence to include failed KEV lookup, got %v", evalDefault.Decisions[0].Finding.MissingEvidence)
+	}
+
+	// Strict TI policy escalates to REVIEW when KEV/EPSS is unavailable.
+	strictTI, err := ParsePolicy([]byte(`
+version: 1
+on_threat_intel_unavailable: REVIEW
+rules:
+  - name: kev-block
+    decision: BLOCK
+    known_exploited: true
+`))
+	if err != nil {
+		t.Fatalf("ParsePolicy failed: %v", err)
+	}
+	evalStrict := Evaluate(result, strictTI, nil, now)
+	if evalStrict.OverallDecision != DecisionReview {
+		t.Errorf("expected REVIEW when on_threat_intel_unavailable=REVIEW, got %s", evalStrict.OverallDecision)
+	}
+}
+
+func TestBaselineScopeComparabilityDistinguishesConfigVsComponents(t *testing.T) {
+	baseScan := &types.ScanResult{
+		LockFile:    "package-lock.json",
+		SkipDevDeps: false,
+		Coverage:    types.ScanCoverage{TotalPackages: 1, ScannedPackages: 1},
+		Dependencies: []types.Dependency{
+			{Name: "express", Version: "4.18.2", Ecosystem: types.EcosystemNPM, Type: types.Production, ScanStatus: types.StatusScanned},
+		},
+	}
+	baseline := BuildBaseline(baseScan)
+
+	// Same config, added component -> compatible = true, added = 1.
+	addedScan := &types.ScanResult{
+		LockFile:    "package-lock.json",
+		SkipDevDeps: false,
+		Coverage:    types.ScanCoverage{TotalPackages: 2, ScannedPackages: 2},
+		Dependencies: []types.Dependency{
+			{Name: "express", Version: "4.18.2", Ecosystem: types.EcosystemNPM, Type: types.Production, ScanStatus: types.StatusScanned},
+			{Name: "lodash", Version: "4.17.21", Ecosystem: types.EcosystemNPM, Type: types.Production, ScanStatus: types.StatusScanned},
+		},
+	}
+	compat, warnings, added, removed := CompareBaselineScope(addedScan, baseline)
+	if !compat || added != 1 || removed != 0 || len(warnings) == 0 {
+		t.Errorf("expected compatible=true, added=1, removed=0; got compat=%v added=%d removed=%d warnings=%v", compat, added, removed, warnings)
+	}
+
+	// Changed SkipDevDeps -> incompatible = false with explicit warning.
+	changedConfigScan := &types.ScanResult{
+		LockFile:    "package-lock.json",
+		SkipDevDeps: true,
+		Coverage:    types.ScanCoverage{TotalPackages: 1, ScannedPackages: 1},
+		Dependencies: []types.Dependency{
+			{Name: "express", Version: "4.18.2", Ecosystem: types.EcosystemNPM, Type: types.Production, ScanStatus: types.StatusScanned},
+		},
+	}
+	eval := Evaluate(changedConfigScan, DefaultPolicy(), baseline, time.Now().UTC())
+	if eval.BaselineScopeCompatible == nil || *eval.BaselineScopeCompatible {
+		t.Errorf("expected BaselineScopeCompatible=false when skip_dev_deps changed, got %v", eval.BaselineScopeCompatible)
+	}
+}
+
+func TestSourceEvidencePreservedThroughMerge(t *testing.T) {
+	res := &types.ScanResult{
+		Coverage: types.ScanCoverage{TotalPackages: 1, ScannedPackages: 1},
+		Dependencies: []types.Dependency{
+			{
+				Name:       "example",
+				Version:    "1.0.0",
+				Ecosystem:  types.EcosystemNPM,
+				Type:       types.Production,
+				ScanStatus: types.StatusScanned,
+				Vulnerabilities: []types.Vulnerability{
+					{
+						ID:        "GHSA-1111-2222-3333",
+						CVEID:     "CVE-2026-4444",
+						Severity:  types.High,
+						CVSSScore: 7.5,
+						Sources:   []string{"github"},
+					},
+					{
+						ID:        "CVE-2026-4444",
+						Severity:  types.Critical,
+						CVSSScore: 9.8,
+						Sources:   []string{"nvd"},
+					},
+				},
+			},
+		},
+	}
+
+	findings := BuildFindings(res)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 merged finding, got %d", len(findings))
+	}
+	f := findings[0]
+	if len(f.SourceEvidence) != 2 {
+		t.Fatalf("expected 2 per-source evidence entries (github & nvd), got %+v", f.SourceEvidence)
+	}
+	if f.EffectiveScoreReason == "" {
+		t.Error("expected non-empty EffectiveScoreReason explaining conservative max selection")
+	}
+}

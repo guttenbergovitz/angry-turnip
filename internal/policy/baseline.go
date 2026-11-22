@@ -17,14 +17,17 @@ import (
 // recorded in baseline snapshots for reproducibility.
 const CurrentResolutionModelVersion = 1
 
-// ScanScope records both the coverage counts and the exact component identity manifest
-// under which a Baseline snapshot was captured.
+// ScanScope records the scan configuration fingerprint (controlling comparability),
+// coverage counts, and exact component identity manifest under which a Baseline was captured.
 type ScanScope struct {
 	ResolutionModelVersion int      `json:"resolution_model_version"`
+	SkipDevDeps            bool     `json:"skip_dev_deps"`
 	TotalPackages          int      `json:"total_packages"`
 	ScannedPackages        int      `json:"scanned_packages"`
 	SkippedPackages        int      `json:"skipped_packages"`
 	ScannedPURLs           []string `json:"scanned_purls"`
+	ConfigFingerprint      string   `json:"config_fingerprint"`
+	ComponentsFingerprint  string   `json:"components_fingerprint"`
 	ScopeFingerprint       string   `json:"scope_fingerprint"`
 }
 
@@ -43,10 +46,14 @@ type Baseline struct {
 // Resolved only includes findings whose package was still successfully scanned;
 // findings whose package was not scanned, failed, or unsupported are recorded under NotObserved.
 type DeltaReport struct {
-	New         []Finding `json:"new"`
-	Existing    []Finding `json:"existing"`
-	Resolved    []string  `json:"resolved"`
-	NotObserved []string  `json:"not_observed"`
+	New               []Finding `json:"new"`
+	Existing          []Finding `json:"existing"`
+	Resolved          []string  `json:"resolved"`
+	NotObserved       []string  `json:"not_observed"`
+	ScopeCompatible   bool      `json:"scope_compatible"`
+	ScopeWarnings     []string  `json:"scope_warnings,omitempty"`
+	AddedComponents   int       `json:"added_components,omitempty"`
+	RemovedComponents int       `json:"removed_components,omitempty"`
 }
 
 // ValidateForBaseline verifies that a ScanResult has valid, complete scan coverage and is
@@ -86,12 +93,18 @@ func BuildBaseline(result *types.ScanResult) *Baseline {
 	}
 	sort.Strings(scannedPURLs)
 
+	configFP := computeConfigFingerprint(result.LockFile, CurrentResolutionModelVersion, result.SkipDevDeps)
+	componentsFP := computeComponentsFingerprint(scannedPURLs)
+
 	scope := ScanScope{
 		ResolutionModelVersion: CurrentResolutionModelVersion,
+		SkipDevDeps:            result.SkipDevDeps,
 		TotalPackages:          result.Coverage.TotalPackages,
 		ScannedPackages:        result.Coverage.ScannedPackages,
 		SkippedPackages:        result.Coverage.SkippedPackages,
 		ScannedPURLs:           scannedPURLs,
+		ConfigFingerprint:      configFP,
+		ComponentsFingerprint:  componentsFP,
 		ScopeFingerprint:       computeScopeFingerprint(result.LockFile, CurrentResolutionModelVersion, result.Coverage.SkippedPackages, scannedPURLs),
 	}
 
@@ -103,6 +116,75 @@ func BuildBaseline(result *types.ScanResult) *Baseline {
 		Scope:        scope,
 		FindingKeys:  keys,
 	}
+}
+
+// CompareBaselineScope checks whether a current ScanResult was produced under a compatible
+// scan configuration (lock file, resolution model version, dev-dependency inclusion) relative
+// to baseline, and counts component additions/removals independently of config compatibility.
+func CompareBaselineScope(result *types.ScanResult, baseline *Baseline) (compatible bool, warnings []string, added, removed int) {
+	if result == nil || baseline == nil {
+		return true, nil, 0, 0
+	}
+
+	compatible = true
+	currentConfigFP := computeConfigFingerprint(result.LockFile, CurrentResolutionModelVersion, result.SkipDevDeps)
+	baselineConfigFP := baseline.Scope.ConfigFingerprint
+	if baselineConfigFP == "" && baseline.LockFile != "" {
+		baselineConfigFP = computeConfigFingerprint(baseline.LockFile, baseline.Scope.ResolutionModelVersion, baseline.Scope.SkipDevDeps)
+	}
+
+	if baselineConfigFP != "" && currentConfigFP != baselineConfigFP {
+		compatible = false
+		var reasons []string
+		if baseline.LockFile != "" && result.LockFile != "" && baseline.LockFile != result.LockFile {
+			reasons = append(reasons, fmt.Sprintf("lock file changed (%s -> %s)", baseline.LockFile, result.LockFile))
+		}
+		if baseline.Scope.ResolutionModelVersion != 0 && baseline.Scope.ResolutionModelVersion != CurrentResolutionModelVersion {
+			reasons = append(reasons, fmt.Sprintf("resolution model version changed (%d -> %d)", baseline.Scope.ResolutionModelVersion, CurrentResolutionModelVersion))
+		}
+		if baseline.Scope.SkipDevDeps != result.SkipDevDeps {
+			reasons = append(reasons, fmt.Sprintf("skip_dev_deps changed (%v -> %v)", baseline.Scope.SkipDevDeps, result.SkipDevDeps))
+		}
+		if len(reasons) == 0 {
+			reasons = append(reasons, "scan configuration fingerprint changed")
+		}
+		warnings = append(warnings, fmt.Sprintf("Baseline scope configuration mismatch (%s); delta comparison may not be directly comparable.", strings.Join(reasons, ", ")))
+	}
+
+	if len(baseline.Scope.ScannedPURLs) > 0 {
+		currentSet := ScannedPURLSet(result)
+		baselineSet := make(map[string]bool, len(baseline.Scope.ScannedPURLs))
+		for _, p := range baseline.Scope.ScannedPURLs {
+			baselineSet[p] = true
+			if !currentSet[p] {
+				removed++
+			}
+		}
+		for p := range currentSet {
+			if !baselineSet[p] {
+				added++
+			}
+		}
+		if added > 0 || removed > 0 {
+			warnings = append(warnings, fmt.Sprintf("Component set changed relative to baseline (%d added, %d removed).", added, removed))
+		}
+	}
+
+	return compatible, warnings, added, removed
+}
+
+func computeConfigFingerprint(lockFile string, modelVersion int, skipDevDeps bool) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "lockfile=%s\nmodel=%d\nskip_dev_deps=%v\n", lockFile, modelVersion, skipDevDeps)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func computeComponentsFingerprint(sortedScannedPURLs []string) string {
+	h := sha256.New()
+	for _, p := range sortedScannedPURLs {
+		fmt.Fprintf(h, "purl=%s\n", p)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func computeScopeFingerprint(lockFile string, modelVersion, skipped int, sortedScannedPURLs []string) string {

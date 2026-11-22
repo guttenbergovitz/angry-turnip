@@ -257,19 +257,33 @@ func (s *Scanner) enrichVulnerability(ctx context.Context, vuln *types.Vulnerabi
 	)
 }
 
-// enrichThreatIntel performs a single best-effort batch pass over discovered CVE identifiers
-// to attach keyless threat-intelligence signals (CISA KEV and FIRST EPSS). Failures never
-// degrade scan coverage or drop vulnerabilities; zero network calls are made if no CVEs exist.
+// enrichThreatIntel performs a single best-effort parallel batch pass over discovered CVE
+// identifiers to attach keyless threat-intelligence signals (CISA KEV and FIRST EPSS) with
+// independent per-source timeouts and explicit provenance statuses. Failures never degrade
+// scan coverage or drop vulnerabilities, and are never conflated with negative lookups.
 func (s *Scanner) enrichThreatIntel(ctx context.Context, result *types.ScanResult) {
-	if result == nil || (s.KEVEnricher == nil && s.EPSSEnricher == nil) {
+	if result == nil {
+		return
+	}
+
+	result.ThreatIntel = types.ThreatIntelMetadata{
+		KEV:  types.SourceEnrichmentStatus{Status: types.EnrichmentNotRequested},
+		EPSS: types.SourceEnrichmentStatus{Status: types.EnrichmentNotRequested},
+	}
+
+	if s.KEVEnricher == nil && s.EPSSEnricher == nil {
 		return
 	}
 
 	cveSet := make(map[string]struct{})
 	for i := range result.Dependencies {
 		for j := range result.Dependencies[i].Vulnerabilities {
-			if cveID := canonicalCVEID(&result.Dependencies[i].Vulnerabilities[j]); cveID != "" {
+			v := &result.Dependencies[i].Vulnerabilities[j]
+			if cveID := canonicalCVEID(v); cveID != "" {
 				cveSet[cveID] = struct{}{}
+			} else {
+				v.KEVStatus = types.EnrichmentNotRequested
+				v.EPSSStatus = types.EnrichmentNotRequested
 			}
 		}
 	}
@@ -283,31 +297,91 @@ func (s *Scanner) enrichThreatIntel(ctx context.Context, result *types.ScanResul
 	}
 	sort.Strings(cveIDs)
 
-	enrichCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	// Shared overall budget with independent per-source timeouts so a slow source
+	// cannot starve the other source.
+	budgetCtx, budgetCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer budgetCancel()
 
-	var kevMatches map[string]bool
+	var (
+		wg         sync.WaitGroup
+		kevMatches map[string]bool
+		kevErr     error
+		kevFetched time.Time
+		epssScores map[string]struct {
+			epss float64
+			pct  float64
+		}
+		epssErr     error
+		epssFetched time.Time
+	)
+
 	if s.KEVEnricher != nil {
-		if m, err := s.KEVEnricher.LookupKEV(enrichCtx, cveIDs); err == nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			kevCtx, cancel := context.WithTimeout(budgetCtx, 8*time.Second)
+			defer cancel()
+			m, err := s.KEVEnricher.LookupKEV(kevCtx, cveIDs)
+			kevFetched = time.Now().UTC()
 			kevMatches = m
+			kevErr = err
+		}()
+	}
+
+	if s.EPSSEnricher != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			epssCtx, cancel := context.WithTimeout(budgetCtx, 8*time.Second)
+			defer cancel()
+			scores, err := s.EPSSEnricher.LookupEPSS(epssCtx, cveIDs)
+			epssFetched = time.Now().UTC()
+			epssErr = err
+			if err == nil && len(scores) > 0 {
+				epssScores = make(map[string]struct {
+					epss float64
+					pct  float64
+				}, len(scores))
+				for id, sc := range scores {
+					epssScores[id] = struct {
+						epss float64
+						pct  float64
+					}{epss: sc.EPSS, pct: sc.Percentile}
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	if s.KEVEnricher != nil {
+		t := kevFetched
+		if kevErr != nil {
+			result.ThreatIntel.KEV = types.SourceEnrichmentStatus{
+				Status:    types.EnrichmentFailed,
+				FetchedAt: &t,
+				Error:     kevErr.Error(),
+			}
+		} else {
+			result.ThreatIntel.KEV = types.SourceEnrichmentStatus{
+				Status:    types.EnrichmentAvailable,
+				FetchedAt: &t,
+			}
 		}
 	}
 
-	var epssScores map[string]struct {
-		epss float64
-		pct  float64
-	}
 	if s.EPSSEnricher != nil {
-		if scores, err := s.EPSSEnricher.LookupEPSS(enrichCtx, cveIDs); err == nil && len(scores) > 0 {
-			epssScores = make(map[string]struct {
-				epss float64
-				pct  float64
-			}, len(scores))
-			for id, sc := range scores {
-				epssScores[id] = struct {
-					epss float64
-					pct  float64
-				}{epss: sc.EPSS, pct: sc.Percentile}
+		t := epssFetched
+		if epssErr != nil {
+			result.ThreatIntel.EPSS = types.SourceEnrichmentStatus{
+				Status:    types.EnrichmentFailed,
+				FetchedAt: &t,
+				Error:     epssErr.Error(),
+			}
+		} else {
+			result.ThreatIntel.EPSS = types.SourceEnrichmentStatus{
+				Status:    types.EnrichmentAvailable,
+				FetchedAt: &t,
 			}
 		}
 	}
@@ -319,14 +393,34 @@ func (s *Scanner) enrichThreatIntel(ctx context.Context, result *types.ScanResul
 			if cveID == "" {
 				continue
 			}
-			if kevMatches[cveID] {
-				vuln.KnownExploited = true
-				vuln.Sources = appendUniqueSource(vuln.Sources, "cisa-kev")
+
+			if s.KEVEnricher != nil {
+				if kevErr != nil {
+					vuln.KEVStatus = types.EnrichmentFailed
+				} else if kevMatches[cveID] {
+					vuln.KnownExploited = true
+					vuln.KEVStatus = types.EnrichmentAvailable
+					vuln.Sources = appendUniqueSource(vuln.Sources, "cisa-kev")
+				} else {
+					vuln.KEVStatus = types.EnrichmentNotFound
+				}
+			} else {
+				vuln.KEVStatus = types.EnrichmentNotRequested
 			}
-			if sc, ok := epssScores[cveID]; ok {
-				vuln.EPSSScore = sc.epss
-				vuln.EPSSPercentile = sc.pct
-				vuln.Sources = appendUniqueSource(vuln.Sources, "epss")
+
+			if s.EPSSEnricher != nil {
+				if epssErr != nil {
+					vuln.EPSSStatus = types.EnrichmentFailed
+				} else if sc, ok := epssScores[cveID]; ok {
+					vuln.EPSSScore = sc.epss
+					vuln.EPSSPercentile = sc.pct
+					vuln.EPSSStatus = types.EnrichmentAvailable
+					vuln.Sources = appendUniqueSource(vuln.Sources, "epss")
+				} else {
+					vuln.EPSSStatus = types.EnrichmentNotFound
+				}
+			} else {
+				vuln.EPSSStatus = types.EnrichmentNotRequested
 			}
 		}
 	}
@@ -472,10 +566,10 @@ func scanGraph(
 		}
 	}
 
-	return buildScanResultFromGraph(projectPath, lockFile, lockHash, graph, lockType)
+	return buildScanResultFromGraph(projectPath, lockFile, lockHash, graph, lockType, skipDevDeps)
 }
 
-func buildScanResultFromGraph(projectPath, lockFile, lockHash string, graph *types.DependencyGraph, lockType lockfile.LockFileType) *types.ScanResult {
+func buildScanResultFromGraph(projectPath, lockFile, lockHash string, graph *types.DependencyGraph, lockType lockfile.LockFileType, skipDevDeps bool) *types.ScanResult {
 	nodeKeys := make([]string, 0, len(graph.Nodes))
 	for key := range graph.Nodes {
 		nodeKeys = append(nodeKeys, key)
@@ -542,6 +636,7 @@ func buildScanResultFromGraph(projectPath, lockFile, lockHash string, graph *typ
 		ScannedAt:    time.Now().UTC(),
 		LockFile:     lockFile,
 		LockFileHash: lockHash,
+		SkipDevDeps:  skipDevDeps,
 		Dependencies: deps,
 		Coverage:     coverage,
 	}

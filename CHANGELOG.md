@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-11-22
+
+### Added
+
+- **Threat Intelligence Provenance & Parallel Execution**
+  - Added explicit per-source `EnrichmentStatus` (`available`, `not_found`, `failed`, `not_requested`), fetch timestamps, and error reporting on `ScanResult.ThreatIntel` and per-finding `kev_status` / `epss_status` so lookup failures are never conflated with negative results.
+  - Executed CISA KEV and FIRST EPSS lookups in parallel with independent per-source timeouts (8s each within a shared 10s budget).
+  - Surfaced failed threat-intelligence lookups in `EvaluationResult.EvidenceNotes`, `Finding.MissingEvidence`, and `vigil explain`.
+- **Policy Engine Integration for CISA KEV & FIRST EPSS**
+  - Added `known_exploited` and `min_epss` (strictly validated `0.0–1.0`) rule conditions to `policy.Rule` and `on_threat_intel_unavailable` (`ALLOW` / `REVIEW` / `BLOCK`) to `policy.Policy`.
+  - Updated `DefaultPolicy()` to block actively exploited production vulnerabilities (`threat-intel/kev-block`) regardless of severity, while keeping basic SCA resilient to transient threat-intelligence API failures.
+- **Baseline Scope Comparability**
+  - Separated `ScanScope.ConfigFingerprint` (lock file, resolution model version, `skip_dev_deps`) from `ScanScope.ComponentsFingerprint` (sorted `ScannedPURLs`).
+  - Added `CompareBaselineScope` and `EvaluationResult.BaselineScopeCompatible` so configuration mismatches emit explicit warnings while routine dependency updates remain comparable.
+- **Source-Specific Evidence Preservation**
+  - Preserved per-source advisory records (`SourceEvidence`) through union-find deduplication and added `EffectiveScoreReason` explaining which upstream source(s) supplied the effective severity and CVSS score.
+
 ## [2.3.0] - 2026-11-22
 
 ### Added

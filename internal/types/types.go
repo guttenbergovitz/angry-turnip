@@ -50,6 +50,30 @@ const (
 	Development DependencyType = "development"
 )
 
+// EnrichmentStatus distinguishes positive findings, negative lookups, failures, and skipped queries
+// for optional threat-intelligence sources so failures are never conflated with negative results.
+type EnrichmentStatus string
+
+const (
+	EnrichmentAvailable    EnrichmentStatus = "available"
+	EnrichmentNotFound     EnrichmentStatus = "not_found"
+	EnrichmentFailed       EnrichmentStatus = "failed"
+	EnrichmentNotRequested EnrichmentStatus = "not_requested"
+)
+
+// SourceEnrichmentStatus records the fetch outcome and provenance for a threat-intelligence source.
+type SourceEnrichmentStatus struct {
+	Status    EnrichmentStatus `json:"status"`
+	FetchedAt *time.Time       `json:"fetched_at,omitempty"`
+	Error     string           `json:"error,omitempty"`
+}
+
+// ThreatIntelMetadata records per-source threat-intelligence enrichment outcomes for a scan.
+type ThreatIntelMetadata struct {
+	KEV  SourceEnrichmentStatus `json:"kev"`
+	EPSS SourceEnrichmentStatus `json:"epss"`
+}
+
 // Vulnerability represents a single CVE or security advisory.
 type Vulnerability struct {
 	ID             string
@@ -62,14 +86,16 @@ type Vulnerability struct {
 	References     []string
 	PublishedAt    *time.Time
 	ModifiedAt     *time.Time
-	Sources        []string   // Sources where the vulnerability was found (osv, nvd, github, etc.)
-	CVEID          string     // CVE-YYYY-*** identifier from MITRE
-	CVETitle       string     // Title from NVD/MITRE
-	CVEDescription string     // Full description from NVD/MITRE
-	CVESeverity    Severity   // Severity from MITRE/NVD
-	KnownExploited bool       // True if listed in the CISA Known Exploited Vulnerabilities (KEV) catalogue
-	EPSSScore      float64    // FIRST EPSS 30-day exploitation probability (0.0-1.0)
-	EPSSPercentile float64    // FIRST EPSS percentile rank across all scored CVEs (0.0-1.0)
+	Sources        []string         // Sources where the vulnerability was found (osv, nvd, github, etc.)
+	CVEID          string           // CVE-YYYY-*** identifier from MITRE
+	CVETitle       string           // Title from NVD/MITRE
+	CVEDescription string           // Full description from NVD/MITRE
+	CVESeverity    Severity         // Severity from MITRE/NVD
+	KnownExploited bool             // True if listed in the CISA Known Exploited Vulnerabilities (KEV) catalogue
+	KEVStatus      EnrichmentStatus // Explicit KEV lookup status (available, not_found, failed, not_requested)
+	EPSSScore      float64          // FIRST EPSS 30-day exploitation probability (0.0-1.0)
+	EPSSPercentile float64          // FIRST EPSS percentile rank across all scored CVEs (0.0-1.0)
+	EPSSStatus     EnrichmentStatus // Explicit EPSS lookup status (available, not_found, failed, not_requested)
 }
 
 // Severity represents a vulnerability severity level.
@@ -107,8 +133,10 @@ type ScanResult struct {
 	ScannedAt     time.Time
 	LockFile      string
 	LockFileHash  string // SHA-256 hash for cache invalidation
+	SkipDevDeps   bool   // Whether development dependencies were excluded from scope
 	Dependencies  []Dependency
 	Coverage      ScanCoverage
+	ThreatIntel   ThreatIntelMetadata
 	TotalVulns    int
 	CriticalVulns int
 	HighVulns     int

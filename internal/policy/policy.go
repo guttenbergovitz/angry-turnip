@@ -39,6 +39,8 @@ type Rule struct {
 	MinSeverity    types.Severity `yaml:"min_severity,omitempty" json:"min_severity,omitempty"`
 	MatchSeverity  types.Severity `yaml:"match_severity,omitempty" json:"match_severity,omitempty"`
 	MinCVSS        float64        `yaml:"min_cvss,omitempty" json:"min_cvss,omitempty"`
+	KnownExploited *bool          `yaml:"known_exploited,omitempty" json:"known_exploited,omitempty"`
+	MinEPSS        float64        `yaml:"min_epss,omitempty" json:"min_epss,omitempty"`
 	ProductionOnly bool           `yaml:"production_only,omitempty" json:"production_only,omitempty"`
 	NewOnly        bool           `yaml:"new_only,omitempty" json:"new_only,omitempty"`
 	Description    string         `yaml:"description,omitempty" json:"description,omitempty"`
@@ -63,12 +65,13 @@ type Exception struct {
 
 // Policy defines declarative security gate rules and scoped exceptions.
 type Policy struct {
-	Version           int         `yaml:"version" json:"version"`
-	StrictExceptions  bool        `yaml:"strict_exceptions,omitempty" json:"strict_exceptions,omitempty"`
-	FailOnScanError   *bool       `yaml:"fail_on_scan_error,omitempty" json:"fail_on_scan_error,omitempty"`
-	FailOnUnsupported *bool       `yaml:"fail_on_unsupported,omitempty" json:"fail_on_unsupported,omitempty"`
-	Rules             []Rule      `yaml:"rules" json:"rules"`
-	Exceptions        []Exception `yaml:"exceptions,omitempty" json:"exceptions,omitempty"`
+	Version                  int         `yaml:"version" json:"version"`
+	StrictExceptions         bool        `yaml:"strict_exceptions,omitempty" json:"strict_exceptions,omitempty"`
+	FailOnScanError          *bool       `yaml:"fail_on_scan_error,omitempty" json:"fail_on_scan_error,omitempty"`
+	FailOnUnsupported        *bool       `yaml:"fail_on_unsupported,omitempty" json:"fail_on_unsupported,omitempty"`
+	OnThreatIntelUnavailable Decision    `yaml:"on_threat_intel_unavailable,omitempty" json:"on_threat_intel_unavailable,omitempty"`
+	Rules                    []Rule      `yaml:"rules" json:"rules"`
+	Exceptions               []Exception `yaml:"exceptions,omitempty" json:"exceptions,omitempty"`
 }
 
 // FindingDecision records the deterministic policy decision and reasoning for a single Finding.
@@ -85,33 +88,44 @@ type FindingDecision struct {
 
 // EvaluationResult aggregates all finding decisions alongside independent evidence validation.
 type EvaluationResult struct {
-	OverallDecision     Decision          `json:"overall_decision"`
-	EvidenceState       EvidenceState     `json:"evidence_state"`
-	EvidenceNotes       []string          `json:"evidence_notes,omitempty"`
-	ScopeExclusions     int               `json:"scope_exclusions,omitempty"`
-	PolicyVersion       int               `json:"policy_version"`
-	Decisions           []FindingDecision `json:"decisions"`
-	BlockCount          int               `json:"block_count"`
-	ReviewCount         int               `json:"review_count"`
-	AllowCount          int               `json:"allow_count"`
-	SuppressedCount     int               `json:"suppressed_count"`
-	ExpiredExceptions   int               `json:"expired_exceptions"`
-	ScanIncomplete      bool              `json:"scan_incomplete"`
-	FailedPackages      int               `json:"failed_packages"`
-	UnsupportedPackages int               `json:"unsupported_packages"`
+	OverallDecision         Decision                   `json:"overall_decision"`
+	EvidenceState           EvidenceState              `json:"evidence_state"`
+	EvidenceNotes           []string                   `json:"evidence_notes,omitempty"`
+	ThreatIntel             *types.ThreatIntelMetadata `json:"threat_intel,omitempty"`
+	BaselineScopeCompatible *bool                      `json:"baseline_scope_compatible,omitempty"`
+	ScopeExclusions         int                        `json:"scope_exclusions,omitempty"`
+	PolicyVersion           int                        `json:"policy_version"`
+	Decisions               []FindingDecision          `json:"decisions"`
+	BlockCount              int                        `json:"block_count"`
+	ReviewCount             int                        `json:"review_count"`
+	AllowCount              int                        `json:"allow_count"`
+	SuppressedCount         int                        `json:"suppressed_count"`
+	ExpiredExceptions       int                        `json:"expired_exceptions"`
+	ScanIncomplete          bool                       `json:"scan_incomplete"`
+	FailedPackages          int                        `json:"failed_packages"`
+	UnsupportedPackages     int                        `json:"unsupported_packages"`
 }
 
 // DefaultPolicy returns Vigil's built-in deterministic security policy.
 // Known HIGH vulnerabilities in production remain subject to REVIEW unless formally
-// accepted via an active, scoped exception.
+// accepted via an active, scoped exception. Actively exploited (CISA KEV) production
+// vulnerabilities are blocked regardless of severity.
 func DefaultPolicy() Policy {
 	failOnError := true
 	failOnUnsupported := true
+	kevTrue := true
 	return Policy{
 		Version:           1,
 		FailOnScanError:   &failOnError,
 		FailOnUnsupported: &failOnUnsupported,
 		Rules: []Rule{
+			{
+				Name:           "threat-intel/kev-block",
+				Decision:       DecisionBlock,
+				KnownExploited: &kevTrue,
+				ProductionOnly: true,
+				Description:    "Block releases with production vulnerabilities listed in CISA KEV (actively exploited).",
+			},
 			{
 				Name:           "production/critical-block",
 				Decision:       DecisionBlock,
@@ -193,6 +207,15 @@ func ParsePolicy(data []byte) (Policy, error) {
 		return Policy{}, fmt.Errorf("policy must declare at least one rule")
 	}
 
+	if pol.OnThreatIntelUnavailable != "" {
+		pol.OnThreatIntelUnavailable = Decision(strings.ToUpper(strings.TrimSpace(string(pol.OnThreatIntelUnavailable))))
+		switch pol.OnThreatIntelUnavailable {
+		case DecisionAllow, DecisionReview, DecisionBlock:
+		default:
+			return Policy{}, fmt.Errorf("invalid on_threat_intel_unavailable %q (allowed: ALLOW, REVIEW, BLOCK)", pol.OnThreatIntelUnavailable)
+		}
+	}
+
 	for i := range pol.Rules {
 		r := &pol.Rules[i]
 		if strings.TrimSpace(r.Name) == "" {
@@ -206,6 +229,9 @@ func ParsePolicy(data []byte) (Policy, error) {
 		}
 		if r.MinCVSS < 0.0 || r.MinCVSS > 10.0 {
 			return Policy{}, fmt.Errorf("rule %q has out-of-range min_cvss %.2f (must be between 0.0 and 10.0)", r.Name, r.MinCVSS)
+		}
+		if r.MinEPSS < 0.0 || r.MinEPSS > 1.0 {
+			return Policy{}, fmt.Errorf("rule %q has out-of-range min_epss %.4f (must be between 0.0 and 1.0)", r.Name, r.MinEPSS)
 		}
 		if r.MinSeverity != "" {
 			sev, ok := types.ParseSeverity(string(r.MinSeverity))
@@ -372,6 +398,23 @@ func Evaluate(result *types.ScanResult, pol Policy, baseline *Baseline, now time
 		eval.FailedPackages = result.Coverage.FailedPackages
 		eval.UnsupportedPackages = result.Coverage.UnsupportedPackages
 		eval.ScopeExclusions = result.Coverage.SkippedPackages
+
+		if result.ThreatIntel.KEV.Status != "" || result.ThreatIntel.EPSS.Status != "" {
+			ti := result.ThreatIntel
+			eval.ThreatIntel = &ti
+			if ti.KEV.Status == types.EnrichmentFailed {
+				eval.EvidenceNotes = append(eval.EvidenceNotes, fmt.Sprintf("Threat intelligence enrichment failed for CISA KEV: %s", ti.KEV.Error))
+			}
+			if ti.EPSS.Status == types.EnrichmentFailed {
+				eval.EvidenceNotes = append(eval.EvidenceNotes, fmt.Sprintf("Threat intelligence enrichment failed for FIRST EPSS: %s", ti.EPSS.Error))
+			}
+		}
+
+		if baseline != nil {
+			compatible, scopeWarnings, _, _ := CompareBaselineScope(result, baseline)
+			eval.BaselineScopeCompatible = &compatible
+			eval.EvidenceNotes = append(eval.EvidenceNotes, scopeWarnings...)
+		}
 	}
 
 	failOnScanError := true
@@ -439,7 +482,15 @@ func evaluateFinding(f Finding, pol Policy, hasBaseline, isNew bool, now time.Ti
 	fd.Reasoning = append(fd.Reasoning, fmt.Sprintf("Runtime exploitability is %s (confidence: %s): %s",
 		f.Exploitability.Status, f.Exploitability.Confidence, f.Exploitability.Rationale))
 
+	needsKEV := false
+	needsEPSS := false
 	for _, rule := range pol.Rules {
+		if rule.KnownExploited != nil {
+			needsKEV = true
+		}
+		if rule.MinEPSS > 0 {
+			needsEPSS = true
+		}
 		if !ruleMatches(rule, f, isNew) {
 			continue
 		}
@@ -451,6 +502,21 @@ func evaluateFinding(f Finding, pol Policy, hasBaseline, isNew bool, now time.Ti
 			fd.Reasoning = append(fd.Reasoning, fmt.Sprintf("Matched rule %q (%s): %s", rule.Name, rule.Decision, rule.Description))
 		} else {
 			fd.Reasoning = append(fd.Reasoning, fmt.Sprintf("Matched rule %q (%s).", rule.Name, rule.Decision))
+		}
+	}
+
+	if (needsKEV && f.KEVStatus == types.EnrichmentFailed) || (needsEPSS && f.EPSSStatus == types.EnrichmentFailed) {
+		var failedSources []string
+		if needsKEV && f.KEVStatus == types.EnrichmentFailed {
+			failedSources = append(failedSources, "CISA KEV")
+		}
+		if needsEPSS && f.EPSSStatus == types.EnrichmentFailed {
+			failedSources = append(failedSources, "FIRST EPSS")
+		}
+		fd.Reasoning = append(fd.Reasoning, fmt.Sprintf("Threat intelligence unavailable (%s lookup failed); rules relying on it could not be fully verified.", strings.Join(failedSources, ", ")))
+		if pol.OnThreatIntelUnavailable != "" && decisionRank(pol.OnThreatIntelUnavailable) > decisionRank(fd.Decision) {
+			fd.Decision = pol.OnThreatIntelUnavailable
+			fd.MatchedRule = "threat-intel/unavailable"
 		}
 	}
 
@@ -506,6 +572,19 @@ func ruleMatches(rule Rule, f Finding, isNew bool) bool {
 	}
 	if rule.MinCVSS > 0 && f.CVSSScore < rule.MinCVSS {
 		return false
+	}
+	if rule.KnownExploited != nil {
+		if f.KEVStatus == types.EnrichmentFailed {
+			return false
+		}
+		if f.KnownExploited != *rule.KnownExploited {
+			return false
+		}
+	}
+	if rule.MinEPSS > 0 {
+		if f.EPSSStatus == types.EnrichmentFailed || f.EPSSScore < rule.MinEPSS {
+			return false
+		}
 	}
 	return true
 }

@@ -265,4 +265,99 @@ func TestEnrichThreatIntelSkipsNetworkWhenNoCVEs(t *testing.T) {
 	if kevStub.calls != 0 || epssStub.calls != 0 {
 		t.Errorf("expected 0 threat-intel calls on clean scan, got kev=%d epss=%d", kevStub.calls, epssStub.calls)
 	}
+	if result.ThreatIntel.KEV.Status != types.EnrichmentNotRequested || result.ThreatIntel.EPSS.Status != types.EnrichmentNotRequested {
+		t.Errorf("expected not_requested statuses on clean scan, got %+v", result.ThreatIntel)
+	}
+}
+
+func TestEnrichThreatIntelRecordsFailuresWithoutConflatingNegatives(t *testing.T) {
+	kevStub := &stubKEVEnricher{err: errors.New("cisa timeout")}
+	epssStub := &stubEPSSEnricher{
+		scores: map[string]epss.Score{
+			"CVE-2021-44228": {EPSS: 0.975, Percentile: 0.999},
+		},
+	}
+
+	scanner := &Scanner{KEVEnricher: kevStub, EPSSEnricher: epssStub}
+	result := &types.ScanResult{
+		Dependencies: []types.Dependency{
+			{
+				Name:    "log4j-core",
+				Version: "2.14.1",
+				Vulnerabilities: []types.Vulnerability{
+					{ID: "CVE-2021-44228", Sources: []string{"osv"}},
+					{ID: "CVE-2026-99999", Sources: []string{"osv"}},
+				},
+			},
+		},
+	}
+
+	scanner.enrichThreatIntel(context.Background(), result)
+
+	if result.ThreatIntel.KEV.Status != types.EnrichmentFailed || result.ThreatIntel.KEV.Error == "" || result.ThreatIntel.KEV.FetchedAt == nil {
+		t.Errorf("expected failed KEV metadata with error and timestamp, got %+v", result.ThreatIntel.KEV)
+	}
+	if result.ThreatIntel.EPSS.Status != types.EnrichmentAvailable || result.ThreatIntel.EPSS.FetchedAt == nil {
+		t.Errorf("expected available EPSS metadata, got %+v", result.ThreatIntel.EPSS)
+	}
+
+	v0 := result.Dependencies[0].Vulnerabilities[0]
+	v1 := result.Dependencies[0].Vulnerabilities[1]
+	if v0.KEVStatus != types.EnrichmentFailed || v1.KEVStatus != types.EnrichmentFailed {
+		t.Errorf("expected KEVStatus=failed on both CVEs, got %q and %q", v0.KEVStatus, v1.KEVStatus)
+	}
+	if v0.EPSSStatus != types.EnrichmentAvailable {
+		t.Errorf("expected CVE-2021-44228 EPSSStatus=available, got %q", v0.EPSSStatus)
+	}
+	if v1.EPSSStatus != types.EnrichmentNotFound {
+		t.Errorf("expected unscored CVE EPSSStatus=not_found (distinct from failed), got %q", v1.EPSSStatus)
+	}
+}
+
+type slowKEVEnricher struct{ delay time.Duration }
+
+func (s *slowKEVEnricher) LookupKEV(ctx context.Context, _ []string) (map[string]bool, error) {
+	select {
+	case <-time.After(s.delay):
+		return map[string]bool{}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+type slowEPSSEnricher struct{ delay time.Duration }
+
+func (s *slowEPSSEnricher) LookupEPSS(ctx context.Context, _ []string) (map[string]epss.Score, error) {
+	select {
+	case <-time.After(s.delay):
+		return map[string]epss.Score{}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestEnrichThreatIntelRunsInParallel(t *testing.T) {
+	scanner := &Scanner{
+		KEVEnricher:  &slowKEVEnricher{delay: 60 * time.Millisecond},
+		EPSSEnricher: &slowEPSSEnricher{delay: 60 * time.Millisecond},
+	}
+	result := &types.ScanResult{
+		Dependencies: []types.Dependency{
+			{
+				Name:    "pkg",
+				Version: "1.0.0",
+				Vulnerabilities: []types.Vulnerability{
+					{ID: "CVE-2024-0001"},
+				},
+			},
+		},
+	}
+
+	start := time.Now()
+	scanner.enrichThreatIntel(context.Background(), result)
+	elapsed := time.Since(start)
+
+	if elapsed >= 110*time.Millisecond {
+		t.Errorf("expected KEV and EPSS to run in parallel (~60ms), took %v", elapsed)
+	}
 }

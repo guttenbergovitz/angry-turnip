@@ -10,33 +10,47 @@ import (
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
 
+// SourceEvidence preserves per-source severity and CVSS provenance before conservative
+// merging so discrepancies between NVD, GHSA, and OSV remain auditable.
+type SourceEvidence struct {
+	Source     string         `json:"source"`
+	AdvisoryID string         `json:"advisory_id"`
+	Severity   types.Severity `json:"severity"`
+	CVSSScore  float64        `json:"cvss_score,omitempty"`
+	CVSSVector string         `json:"cvss_vector,omitempty"`
+}
+
 // Finding is the canonical, normalised security finding produced from scan evidence.
 // Components are uniquely identified by PURL (including ecosystem) and transitively
 // overlapping advisory records (such as GHSA and CVE aliases for the same component)
 // are merged into a single canonical finding independently of input ordering.
 type Finding struct {
-	Key               string                          `json:"key"`
-	ID                string                          `json:"id"`
-	Aliases           []string                        `json:"aliases,omitempty"`
-	PURL              string                          `json:"purl"`
-	Package           string                          `json:"package"`
-	Version           string                          `json:"version"`
-	Ecosystem         types.Ecosystem                 `json:"ecosystem"`
-	DependencyType    types.DependencyType            `json:"dependency_type"`
-	Direct            bool                            `json:"direct"`
-	Severity          types.Severity                  `json:"severity"`
-	CVSSScore         float64                         `json:"cvss_score"`
-	CVSSVector        string                          `json:"cvss_vector,omitempty"`
-	KnownExploited    bool                            `json:"known_exploited,omitempty"`
-	EPSSScore         float64                         `json:"epss_score,omitempty"`
-	EPSSPercentile    float64                         `json:"epss_percentile,omitempty"`
-	Sources           []string                        `json:"sources,omitempty"`
-	PublishedAt       *time.Time                      `json:"published_at,omitempty"`
-	PackageReleasedAt *time.Time                      `json:"package_released_at,omitempty"`
-	ExploitType       report.ExploitType              `json:"exploit_type"`
-	Exploitability    report.ExploitabilityAssessment `json:"exploitability"`
-	Summary           string                          `json:"summary"`
-	MissingEvidence   []string                        `json:"missing_evidence"`
+	Key                  string                          `json:"key"`
+	ID                   string                          `json:"id"`
+	Aliases              []string                        `json:"aliases,omitempty"`
+	PURL                 string                          `json:"purl"`
+	Package              string                          `json:"package"`
+	Version              string                          `json:"version"`
+	Ecosystem            types.Ecosystem                 `json:"ecosystem"`
+	DependencyType       types.DependencyType            `json:"dependency_type"`
+	Direct               bool                            `json:"direct"`
+	Severity             types.Severity                  `json:"severity"`
+	CVSSScore            float64                         `json:"cvss_score"`
+	CVSSVector           string                          `json:"cvss_vector,omitempty"`
+	EffectiveScoreReason string                          `json:"effective_score_reason,omitempty"`
+	SourceEvidence       []SourceEvidence                `json:"source_evidence,omitempty"`
+	KnownExploited       bool                            `json:"known_exploited,omitempty"`
+	KEVStatus            types.EnrichmentStatus          `json:"kev_status,omitempty"`
+	EPSSScore            float64                         `json:"epss_score,omitempty"`
+	EPSSPercentile       float64                         `json:"epss_percentile,omitempty"`
+	EPSSStatus           types.EnrichmentStatus          `json:"epss_status,omitempty"`
+	Sources              []string                        `json:"sources,omitempty"`
+	PublishedAt          *time.Time                      `json:"published_at,omitempty"`
+	PackageReleasedAt    *time.Time                      `json:"package_released_at,omitempty"`
+	ExploitType          report.ExploitType              `json:"exploit_type"`
+	Exploitability       report.ExploitabilityAssessment `json:"exploitability"`
+	Summary              string                          `json:"summary"`
+	MissingEvidence      []string                        `json:"missing_evidence"`
 }
 
 // BuildPURL constructs a canonical Package URL (PURL) for a dependency.
@@ -96,6 +110,8 @@ func BuildFindings(result *types.ScanResult) []Finding {
 				summary = strings.TrimSpace(vuln.CVETitle)
 			}
 
+			sourceEvidence := buildSourceEvidence(vuln.ID, primaryID, sev, vuln.CVSSScore, strings.TrimSpace(vuln.CVSSVector), sources)
+
 			byPURL[purl] = append(byPURL[purl], Finding{
 				Key:               fmt.Sprintf("%s|%s", primaryID, purl),
 				ID:                primaryID,
@@ -109,9 +125,12 @@ func BuildFindings(result *types.ScanResult) []Finding {
 				Severity:          sev,
 				CVSSScore:         vuln.CVSSScore,
 				CVSSVector:        strings.TrimSpace(vuln.CVSSVector),
+				SourceEvidence:    sourceEvidence,
 				KnownExploited:    vuln.KnownExploited,
+				KEVStatus:         vuln.KEVStatus,
 				EPSSScore:         vuln.EPSSScore,
 				EPSSPercentile:    vuln.EPSSPercentile,
+				EPSSStatus:        vuln.EPSSStatus,
 				Sources:           sources,
 				PublishedAt:       vuln.PublishedAt,
 				PackageReleasedAt: dep.ReleasedAt,
@@ -237,6 +256,7 @@ func mergeComponentFindings(group []Finding) Finding {
 
 	var allIDs []string
 	var allSources []string
+	var allEvidence []SourceEvidence
 	var summaries []string
 	var publishedAt *time.Time
 	var releasedAt *time.Time
@@ -246,14 +266,17 @@ func mergeComponentFindings(group []Finding) Finding {
 	out.CVSSScore = 0
 	out.CVSSVector = ""
 	out.KnownExploited = false
+	out.KEVStatus = ""
 	out.EPSSScore = 0
 	out.EPSSPercentile = 0
+	out.EPSSStatus = ""
 	out.Direct = false
 	out.DependencyType = types.Development
 
 	for _, m := range sorted {
 		allIDs = append(allIDs, m.allAdvisoryIDs()...)
 		allSources = append(allSources, m.Sources...)
+		allEvidence = append(allEvidence, m.SourceEvidence...)
 		if m.Summary != "" {
 			summaries = append(summaries, m.Summary)
 		}
@@ -269,12 +292,14 @@ func mergeComponentFindings(group []Finding) Finding {
 		if m.KnownExploited {
 			out.KnownExploited = true
 		}
+		out.KEVStatus = mergeEnrichmentStatus(out.KEVStatus, m.KEVStatus)
 		if m.EPSSScore > out.EPSSScore {
 			out.EPSSScore = m.EPSSScore
 			out.EPSSPercentile = m.EPSSPercentile
 		} else if m.EPSSScore == out.EPSSScore && m.EPSSPercentile > out.EPSSPercentile {
 			out.EPSSPercentile = m.EPSSPercentile
 		}
+		out.EPSSStatus = mergeEnrichmentStatus(out.EPSSStatus, m.EPSSStatus)
 		if m.PublishedAt != nil && (publishedAt == nil || m.PublishedAt.Before(*publishedAt)) {
 			t := *m.PublishedAt
 			publishedAt = &t
@@ -313,6 +338,8 @@ func mergeComponentFindings(group []Finding) Finding {
 	}
 	out.Key = fmt.Sprintf("%s|%s", out.ID, out.PURL)
 	out.Sources = dedupeSortedStrings(allSources)
+	out.SourceEvidence = dedupeSourceEvidence(allEvidence)
+	out.EffectiveScoreReason = explainEffectiveScore(out.Severity, out.CVSSScore, out.SourceEvidence)
 	out.PublishedAt = publishedAt
 	out.PackageReleasedAt = releasedAt
 
@@ -340,7 +367,7 @@ func mergeComponentFindings(group []Finding) Finding {
 	}
 	out.ExploitType = report.ClassifyExploitType(canonicalVuln)
 	out.Exploitability = report.AssessRuntimeExploitability(canonicalVuln, out.ExploitType)
-	out.MissingEvidence = collectMissingEvidence(out.Severity, out.CVSSScore, out.CVSSVector, out.Exploitability)
+	out.MissingEvidence = collectMissingEvidence(out.Severity, out.CVSSScore, out.CVSSVector, out.Exploitability, out.KEVStatus, out.EPSSStatus)
 
 	return out
 }
@@ -382,7 +409,14 @@ func (f Finding) MatchesID(query string) bool {
 	return false
 }
 
-func collectMissingEvidence(sev types.Severity, cvssScore float64, cvssVector string, assessment report.ExploitabilityAssessment) []string {
+func collectMissingEvidence(
+	sev types.Severity,
+	cvssScore float64,
+	cvssVector string,
+	assessment report.ExploitabilityAssessment,
+	kevStatus types.EnrichmentStatus,
+	epssStatus types.EnrichmentStatus,
+) []string {
 	var missing []string
 
 	if assessment.Status != report.ExploitabilityConfirmedNotAffected {
@@ -397,7 +431,121 @@ func collectMissingEvidence(sev types.Severity, cvssScore float64, cvssVector st
 	if strings.TrimSpace(cvssVector) == "" {
 		missing = append(missing, "CVSS vector")
 	}
+	if kevStatus == types.EnrichmentFailed {
+		missing = append(missing, "CISA KEV lookup (failed)")
+	}
+	if epssStatus == types.EnrichmentFailed {
+		missing = append(missing, "FIRST EPSS lookup (failed)")
+	}
 	return missing
+}
+
+func buildSourceEvidence(rawID, primaryID string, sev types.Severity, cvss float64, vector string, sources []string) []SourceEvidence {
+	advID := strings.TrimSpace(rawID)
+	if advID == "" {
+		advID = primaryID
+	}
+	if len(sources) == 0 {
+		return []SourceEvidence{{
+			Source:     "unknown",
+			AdvisoryID: advID,
+			Severity:   sev,
+			CVSSScore:  cvss,
+			CVSSVector: vector,
+		}}
+	}
+	out := make([]SourceEvidence, 0, len(sources))
+	for _, src := range sources {
+		if src == "cisa-kev" || src == "epss" {
+			continue
+		}
+		out = append(out, SourceEvidence{
+			Source:     src,
+			AdvisoryID: advID,
+			Severity:   sev,
+			CVSSScore:  cvss,
+			CVSSVector: vector,
+		})
+	}
+	return out
+}
+
+func dedupeSourceEvidence(items []SourceEvidence) []SourceEvidence {
+	if len(items) == 0 {
+		return nil
+	}
+	cp := append([]SourceEvidence(nil), items...)
+	sort.Slice(cp, func(i, j int) bool {
+		if cp[i].Source != cp[j].Source {
+			return cp[i].Source < cp[j].Source
+		}
+		if cp[i].AdvisoryID != cp[j].AdvisoryID {
+			return cp[i].AdvisoryID < cp[j].AdvisoryID
+		}
+		if cp[i].CVSSScore != cp[j].CVSSScore {
+			return cp[i].CVSSScore > cp[j].CVSSScore
+		}
+		if cp[i].Severity != cp[j].Severity {
+			return cp[i].Severity < cp[j].Severity
+		}
+		return cp[i].CVSSVector < cp[j].CVSSVector
+	})
+
+	out := make([]SourceEvidence, 0, len(cp))
+	for _, ev := range cp {
+		if len(out) > 0 && out[len(out)-1] == ev {
+			continue
+		}
+		out = append(out, ev)
+	}
+	return out
+}
+
+func explainEffectiveScore(sev types.Severity, cvss float64, evidence []SourceEvidence) string {
+	var sevSources, cvssSources []string
+	for _, ev := range evidence {
+		if sev != types.Unknown && ev.Severity == sev {
+			sevSources = append(sevSources, ev.Source)
+		}
+		if cvss > 0 && ev.CVSSScore == cvss {
+			cvssSources = append(cvssSources, ev.Source)
+		}
+	}
+	sevSources = dedupeSortedStrings(sevSources)
+	cvssSources = dedupeSortedStrings(cvssSources)
+
+	var parts []string
+	if sev != types.Unknown && len(sevSources) > 0 {
+		parts = append(parts, fmt.Sprintf("severity %s (from %s)", strings.ToUpper(string(sev)), strings.Join(sevSources, ", ")))
+	}
+	if cvss > 0 && len(cvssSources) > 0 {
+		parts = append(parts, fmt.Sprintf("CVSS %.1f (from %s)", cvss, strings.Join(cvssSources, ", ")))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "conservative max: " + strings.Join(parts, "; ")
+}
+
+func mergeEnrichmentStatus(a, b types.EnrichmentStatus) types.EnrichmentStatus {
+	rank := func(s types.EnrichmentStatus) int {
+		switch s {
+		case types.EnrichmentAvailable:
+			return 4
+		case types.EnrichmentNotFound:
+			return 3
+		case types.EnrichmentFailed:
+			return 2
+		case types.EnrichmentNotRequested:
+			return 1
+		default:
+			return 0
+		}
+	}
+	if rank(b) > rank(a) {
+		return b
+	}
+	return a
 }
 
 func dedupeSortedStrings(items []string) []string {
