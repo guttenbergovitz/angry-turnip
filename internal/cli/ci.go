@@ -19,25 +19,35 @@ import (
 
 // CIGateOptions configures the CI security gate evaluation.
 type CIGateOptions struct {
-	MinSeverity     types.Severity
-	FailOnCVSS      float64
-	FailOnScanError bool
+	MinSeverity       types.Severity
+	FailOnCVSS        float64
+	FailOnScanError   bool
+	FailOnUnsupported bool
 }
 
-// CIGateOutcome captures the deterministic result of evaluating a ScanResult against CI policy.
+// CIGateOutcome captures the deterministic result of evaluating a ScanResult through the
+// unified policy engine.
 type CIGateOutcome struct {
-	SeverityViolations int
-	CVSSViolations     int
-	FailedPackages     int
-	ExitCode           int
-	Reason             string
+	Evaluation          policy.EvaluationResult
+	SeverityViolations  int
+	CVSSViolations      int
+	FailedPackages      int
+	UnsupportedPackages int
+	ExitCode            int
+	Reason              string
 }
 
-// EvaluateCIGate evaluates scan results against CI policy thresholds and scan coverage guarantees.
-// Absence of vulnerability findings is not treated as proof of safety when packages failed to scan.
+// EvaluateCIGate evaluates scan results through the unified internal/policy engine using
+// CLI threshold flags. Both FailedPackages and UnsupportedPackages are enforced so incomplete
+// coverage never silently produces a passing CI gate.
 func EvaluateCIGate(result *types.ScanResult, opts CIGateOptions) CIGateOutcome {
+	pol := policy.PolicyFromThresholds(opts.MinSeverity, opts.FailOnCVSS, opts.FailOnScanError, opts.FailOnUnsupported)
+	eval := policy.Evaluate(result, pol, nil, time.Now().UTC())
+
 	outcome := CIGateOutcome{
-		FailedPackages: result.Coverage.FailedPackages,
+		Evaluation:          eval,
+		FailedPackages:      eval.FailedPackages,
+		UnsupportedPackages: eval.UnsupportedPackages,
 	}
 
 	for _, dep := range result.Dependencies {
@@ -51,13 +61,13 @@ func EvaluateCIGate(result *types.ScanResult, opts CIGateOptions) CIGateOutcome 
 		}
 	}
 
-	if opts.FailOnScanError && outcome.FailedPackages > 0 {
+	if eval.ScanIncomplete || eval.EvidenceState == policy.EvidenceInvalid {
 		outcome.ExitCode = 2
-		outcome.Reason = fmt.Sprintf("incomplete scan: %d package(s) failed vulnerability lookup", outcome.FailedPackages)
+		outcome.Reason = fmt.Sprintf("incomplete scan: %d failed, %d unsupported package(s)", eval.FailedPackages, eval.UnsupportedPackages)
 		return outcome
 	}
 
-	if outcome.SeverityViolations > 0 || outcome.CVSSViolations > 0 {
+	if eval.OverallDecision == policy.DecisionBlock || eval.OverallDecision == policy.DecisionReview {
 		outcome.ExitCode = 1
 		outcome.Reason = "vulnerabilities exceeded CI policy threshold"
 		return outcome
@@ -85,13 +95,14 @@ func validateCachedResult(result *types.ScanResult, currentLockFile, currentLock
 	return nil
 }
 
-// CI executes the ci command. By default it performs a fresh scan of the current project
-// so that CI gates never pass on stale cached results.
+// CI executes the ci command using the unified internal/policy engine. By default it performs
+// a fresh scan of the current project and fails on both scan lookup errors and unsupported packages.
 func CI(args []string) error {
 	fs := flag.NewFlagSet("ci", flag.ContinueOnError)
 	failOn := fs.String("fail-on", "high", "Fail if vulnerabilities at or above level exist (low, medium, high, critical)")
 	failOnCVSS := fs.Float64("fail-on-cvss", 0.0, "Fail if any vulnerability has CVSS >= this threshold (0.0-10.0)")
 	failOnScanError := fs.Bool("fail-on-scan-error", true, "Fail CI gate if any dependency fails vulnerability lookup")
+	failOnUnsupported := fs.Bool("fail-on-unsupported", true, "Fail CI gate if any dependency has unresolved or unsupported metadata")
 	skipDevDeps := fs.Bool("skip-devdeps", false, "Skip development dependencies during scan")
 	customLockFile := fs.String("lockfile", "", "Explicitly specify lock file name (e.g. go.mod, package-lock.json)")
 	useCache := fs.Bool("use-cache", false, "Evaluate .vigil.cache instead of running a fresh scan (requires matching lock file hash and fresh timestamp)")
@@ -100,7 +111,16 @@ func CI(args []string) error {
 	baselinePath := fs.String("baseline", "", "Path to baseline JSON file for delta evaluation")
 	format := fs.String("format", "text", "Output format (text, csv, markdown, json)")
 
-	if err := fs.Parse(args); err != nil {
+	reordered := reorderFlagsFirst(args, map[string]bool{
+		"fail-on":       true,
+		"fail-on-cvss":  true,
+		"lockfile":      true,
+		"max-cache-age": true,
+		"policy":        true,
+		"baseline":      true,
+		"format":        true,
+	})
+	if err := fs.Parse(reordered); err != nil {
 		return fmt.Errorf("parse flags: %w", err)
 	}
 
@@ -111,6 +131,33 @@ func CI(args []string) error {
 	minSev, ok := types.ParseSeverity(*failOn)
 	if !ok || minSev == types.Unknown {
 		return fmt.Errorf("invalid fail-on level: %s (allowed: low, medium, high, critical)", *failOn)
+	}
+
+	// Validate policy and baseline upfront before running any network scan.
+	var pol policy.Policy
+	if *policyPath != "" {
+		var err error
+		pol, err = policy.LoadPolicy(*policyPath)
+		if err != nil {
+			return err
+		}
+		if pol.FailOnScanError == nil {
+			pol.FailOnScanError = failOnScanError
+		}
+		if pol.FailOnUnsupported == nil {
+			pol.FailOnUnsupported = failOnUnsupported
+		}
+	} else {
+		pol = policy.PolicyFromThresholds(minSev, *failOnCVSS, *failOnScanError, *failOnUnsupported)
+	}
+
+	var baseline *policy.Baseline
+	if *baselinePath != "" {
+		var err error
+		baseline, err = policy.LoadBaseline(*baselinePath)
+		if err != nil {
+			return err
+		}
 	}
 
 	projectPath := "./"
@@ -155,46 +202,29 @@ func CI(args []string) error {
 		}
 	}
 
+	eval := policy.Evaluate(result, pol, baseline, time.Now().UTC())
+
 	if *policyPath != "" {
-		pol, err := policy.LoadPolicy(*policyPath)
-		if err != nil {
-			return err
-		}
-		if pol.FailOnScanError == nil {
-			pol.FailOnScanError = failOnScanError
-		}
-		var baseline *policy.Baseline
-		if *baselinePath != "" {
-			baseline, err = policy.LoadBaseline(*baselinePath)
-			if err != nil {
-				return err
-			}
-		}
-		eval := policy.Evaluate(result, pol, baseline, time.Now().UTC())
 		if err := renderPolicyCIOutput(os.Stdout, eval, *format); err != nil {
 			return err
 		}
-		if eval.ScanIncomplete && (pol.FailOnScanError == nil || *pol.FailOnScanError) {
-			return &ExitError{Code: 2}
+	} else {
+		outcome := EvaluateCIGate(result, CIGateOptions{
+			MinSeverity:       minSev,
+			FailOnCVSS:        *failOnCVSS,
+			FailOnScanError:   *failOnScanError,
+			FailOnUnsupported: *failOnUnsupported,
+		})
+		if err := renderCIOutput(os.Stdout, result, outcome, *format, *failOn, *failOnCVSS); err != nil {
+			return err
 		}
-		if eval.OverallDecision == policy.DecisionBlock || eval.OverallDecision == policy.DecisionReview {
-			return &ExitError{Code: 1}
-		}
-		return nil
 	}
 
-	outcome := EvaluateCIGate(result, CIGateOptions{
-		MinSeverity:     minSev,
-		FailOnCVSS:      *failOnCVSS,
-		FailOnScanError: *failOnScanError,
-	})
-
-	if err := renderCIOutput(os.Stdout, result, outcome, *format, *failOn, *failOnCVSS); err != nil {
-		return err
+	if eval.ScanIncomplete || eval.EvidenceState == policy.EvidenceInvalid {
+		return &ExitError{Code: 2}
 	}
-
-	if outcome.ExitCode != 0 {
-		return &ExitError{Code: outcome.ExitCode}
+	if eval.OverallDecision == policy.DecisionBlock || eval.OverallDecision == policy.DecisionReview {
+		return &ExitError{Code: 1}
 	}
 
 	return nil
@@ -206,11 +236,14 @@ func renderPolicyCIOutput(out io.Writer, eval policy.EvaluationResult, format st
 		enc.SetIndent("", "  ")
 		return enc.Encode(eval)
 	}
-	fmt.Fprintf(out, "CI Policy Decision: %s\n", eval.OverallDecision)
-	fmt.Fprintf(out, "Findings: %d blocked, %d review, %d allowed (%d suppressed, %d expired exception(s))\n",
+	fmt.Fprintf(out, "CI Policy Decision: %s (Evidence: %s)\n", eval.OverallDecision, eval.EvidenceState)
+	fmt.Fprintf(out, "Findings: %d blocked, %d review, %d allowed (%d accepted risk, %d expired exception(s))\n",
 		eval.BlockCount, eval.ReviewCount, eval.AllowCount, eval.SuppressedCount, eval.ExpiredExceptions)
+	for _, note := range eval.EvidenceNotes {
+		fmt.Fprintf(out, "  • Evidence note: %s\n", note)
+	}
 	if eval.ScanIncomplete {
-		fmt.Fprintf(out, "✗ Scan incomplete: %d package(s) failed vulnerability lookup\n", eval.FailedPackages)
+		fmt.Fprintf(out, "✗ Scan incomplete: %d failed, %d unsupported package(s)\n", eval.FailedPackages, eval.UnsupportedPackages)
 	}
 	return nil
 }
@@ -219,9 +252,9 @@ func renderCIOutput(out io.Writer, result *types.ScanResult, outcome CIGateOutco
 	switch format {
 	case "text":
 		if failOnCVSS > 0.0 {
-			fmt.Fprintf(out, "CI Check: severity=%s, CVSS>=%.1f\n", failOn, failOnCVSS)
+			fmt.Fprintf(out, "CI Check: severity=%s, CVSS>=%.1f (Evidence: %s)\n", failOn, failOnCVSS, outcome.Evaluation.EvidenceState)
 		} else {
-			fmt.Fprintf(out, "CI Check: %s and above\n", failOn)
+			fmt.Fprintf(out, "CI Check: %s and above (Evidence: %s)\n", failOn, outcome.Evaluation.EvidenceState)
 		}
 		if result.Coverage.TotalPackages > 0 {
 			fmt.Fprintf(out, "Coverage: %d scanned, %d failed, %d skipped, %d unsupported (total %d)\n",
@@ -234,6 +267,9 @@ func renderCIOutput(out io.Writer, result *types.ScanResult, outcome CIGateOutco
 		}
 		if outcome.FailedPackages > 0 {
 			fmt.Fprintf(out, "✗ Scan incomplete: %d package(s) failed vulnerability lookup\n", outcome.FailedPackages)
+		}
+		if outcome.UnsupportedPackages > 0 {
+			fmt.Fprintf(out, "✗ Scan incomplete: %d package(s) have unresolved or unsupported metadata\n", outcome.UnsupportedPackages)
 		}
 		if outcome.SeverityViolations > 0 {
 			fmt.Fprintf(out, "✗ Found %d vulnerability/vulnerabilities at or above %s level\n", outcome.SeverityViolations, failOn)

@@ -12,10 +12,11 @@ Counting CVEs alone does not give engineering teams enough information to decide
 
 Introduce a dedicated `internal/policy` domain layer sitting strictly between canonical scan evidence and CLI/CI presentation:
 
-1. **Canonical Finding Model (`policy.Finding`)**: normalises vulnerability identity (CVE + aliases), provenance (`Sources`), severity, dependency scope (`production`/`development`, `direct`/`transitive`), evidence-based runtime exploitability, and an explicit `MissingEvidence` list (for example, call-graph reachability and runtime deployment exposure).
-2. **Baseline & Delta Analysis (`policy.Baseline`, `policy.ComputeDelta`)**: enables teams to snapshot accepted findings via `vigil baseline` and evaluate only newly introduced findings alongside resolved regressions.
-3. **Declarative Policy as Code (`policy.Policy`)**: typed YAML rules (`ALLOW` / `REVIEW` / `BLOCK`) with mandatory-metadata, time-bounded exceptions (`id`, `owner`, `reason`, `expires_at`). Expired exceptions never suppress findings and are explicitly surfaced in decision reasoning.
-4. **Explainable Release Gate (`vigil explain <vuln-id>`)**: prints the exact policy decision, matched rule, step-by-step reasoning, and missing evidence for any finding in text or JSON format.
+1. **Canonical Finding Model (`policy.Finding`)**: normalises vulnerability identity (CVE + aliases), PURL-qualified component key (`<advisory-id>|<purl>`), provenance (`Sources`), severity, dependency scope (`production`/`development`, `direct`/`transitive`), evidence-based runtime exploitability, and an explicit `MissingEvidence` list (for example, call-graph reachability and runtime deployment exposure).
+2. **Evidence Validation (`policy.EvidenceState`)**: independently evaluates scan completeness (`COMPLETE`, `PARTIAL`, `UNVERIFIED`, `INVALID`) before policy decisions are finalised, blocking CI by default on both failed lookups and unresolved/unsupported dependencies.
+3. **Baseline & Delta Analysis (`policy.Baseline`, `policy.ComputeDelta`)**: enables teams to snapshot verified complete scans via `vigil baseline` and distinguishes `Resolved` (component scanned and clean) from `NotObserved` (component failed, skipped, or unsupported).
+4. **Declarative Policy as Code (`policy.Policy`)**: strictly validated YAML rules (`KnownFields(true)`, `version: 1`, `ALLOW` / `REVIEW` / `BLOCK`) with scoped, owned, time-bounded exceptions (`id`, `package`, `version`, `ecosystem`, `max_severity`, `approval_id`, `owner`, `reason`, `expires_at`). Expired exceptions never suppress findings, and exceptions never override incomplete scan coverage.
+5. **Explainable Release Gate (`vigil explain <vuln-id>`)**: prints the exact policy decision, evidence state, freshness warnings, matched rule, step-by-step reasoning, and missing evidence for any finding in text or JSON format.
 
 ## Consequences
 

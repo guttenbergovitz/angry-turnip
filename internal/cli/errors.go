@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
 )
@@ -60,4 +61,32 @@ func resolveLockFile(absPath, customLockFile string) (string, lockfile.LockFileT
 		return "", "", fmt.Errorf("no lock file found in %s: %w\n\nSupported lock files: uv.lock, poetry.lock, Pipfile.lock, requirements.txt, package-lock.json, yarn.lock, pnpm-lock.yaml, Cargo.lock, composer.lock, go.mod, pom.xml, gradle.lockfile", absPath, err)
 	}
 	return lockFile, lockType, nil
+}
+
+// reorderFlagsFirst moves flag tokens ahead of positional arguments so standard flag.FlagSet
+// accepts both `vigil explain --policy f.yaml CVE-1` and `vigil explain CVE-1 --policy f.yaml`.
+// valueFlags lists flag names (without leading dashes) that consume the following argument.
+func reorderFlagsFirst(args []string, valueFlags map[string]bool) []string {
+	var flags []string
+	var positionals []string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			positionals = append(positionals, args[i+1:]...)
+			break
+		}
+		if strings.HasPrefix(arg, "-") && len(arg) > 1 {
+			flags = append(flags, arg)
+			trimmed := strings.TrimLeft(arg, "-")
+			if !strings.Contains(trimmed, "=") && valueFlags[trimmed] && i+1 < len(args) {
+				i++
+				flags = append(flags, args[i])
+			}
+		} else {
+			positionals = append(positionals, arg)
+		}
+	}
+
+	return append(flags, positionals...)
 }

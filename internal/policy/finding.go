@@ -11,11 +11,13 @@ import (
 )
 
 // Finding is the canonical, normalised security finding produced from scan evidence.
-// It separates observed advisory provenance from unverified runtime assumptions.
+// Components are uniquely identified by PURL (including ecosystem) so packages across
+// different ecosystems never collide in baselines or policy evaluations.
 type Finding struct {
 	Key               string                          `json:"key"`
 	ID                string                          `json:"id"`
 	Aliases           []string                        `json:"aliases,omitempty"`
+	PURL              string                          `json:"purl"`
 	Package           string                          `json:"package"`
 	Version           string                          `json:"version"`
 	Ecosystem         types.Ecosystem                 `json:"ecosystem"`
@@ -33,6 +35,33 @@ type Finding struct {
 	MissingEvidence   []string                        `json:"missing_evidence"`
 }
 
+// BuildPURL constructs a canonical Package URL (PURL) for a dependency.
+func BuildPURL(eco types.Ecosystem, pkg, ver string) string {
+	switch eco {
+	case types.EcosystemPyPI:
+		return fmt.Sprintf("pkg:pypi/%s@%s", pkg, ver)
+	case types.EcosystemGo:
+		return fmt.Sprintf("pkg:golang/%s@%s", pkg, ver)
+	case types.EcosystemCargo:
+		return fmt.Sprintf("pkg:cargo/%s@%s", pkg, ver)
+	case types.EcosystemPackagist:
+		return fmt.Sprintf("pkg:composer/%s@%s", pkg, ver)
+	case types.EcosystemMaven:
+		if groupID, artifactID, ok := strings.Cut(pkg, ":"); ok {
+			return fmt.Sprintf("pkg:maven/%s/%s@%s", groupID, artifactID, ver)
+		}
+		return fmt.Sprintf("pkg:maven/%s@%s", pkg, ver)
+	case types.EcosystemNPM:
+		cleanPkg := pkg
+		if strings.HasPrefix(pkg, "@") {
+			cleanPkg = strings.ReplaceAll(pkg, "@", "%40")
+		}
+		return fmt.Sprintf("pkg:npm/%s@%s", cleanPkg, ver)
+	default:
+		return fmt.Sprintf("pkg:generic/%s@%s", pkg, ver)
+	}
+}
+
 // BuildFindings converts a ScanResult into a deterministically ordered slice of canonical Findings.
 func BuildFindings(result *types.ScanResult) []Finding {
 	if result == nil {
@@ -42,6 +71,7 @@ func BuildFindings(result *types.ScanResult) []Finding {
 	findings := make([]Finding, 0, result.TotalVulns)
 
 	for _, dep := range result.Dependencies {
+		purl := BuildPURL(dep.Ecosystem, dep.Name, dep.Version)
 		for _, vuln := range dep.Vulnerabilities {
 			primaryID := vuln.ID
 			var aliases []string
@@ -49,6 +79,7 @@ func BuildFindings(result *types.ScanResult) []Finding {
 				primaryID = vuln.CVEID
 				aliases = append(aliases, vuln.ID)
 			}
+			sort.Strings(aliases)
 
 			sev := vuln.Severity
 			if vuln.CVESeverity != "" && vuln.CVESeverity != types.Unknown {
@@ -73,9 +104,10 @@ func BuildFindings(result *types.ScanResult) []Finding {
 			missing := collectMissingEvidence(sev, vuln, assessment)
 
 			findings = append(findings, Finding{
-				Key:               fmt.Sprintf("%s|%s@%s", primaryID, dep.Name, dep.Version),
+				Key:               fmt.Sprintf("%s|%s", primaryID, purl),
 				ID:                primaryID,
 				Aliases:           aliases,
+				PURL:              purl,
 				Package:           dep.Name,
 				Version:           dep.Version,
 				Ecosystem:         dep.Ecosystem,
@@ -103,6 +135,17 @@ func BuildFindings(result *types.ScanResult) []Finding {
 	})
 
 	return findings
+}
+
+// AllKeys returns the finding's canonical key plus alias-derived keys so identity remains
+// stable if an advisory transitions between GHSA and CVE identifiers across scans.
+func (f Finding) AllKeys() []string {
+	keys := make([]string, 0, 1+len(f.Aliases))
+	keys = append(keys, f.Key)
+	for _, alias := range f.Aliases {
+		keys = append(keys, fmt.Sprintf("%s|%s", alias, f.PURL))
+	}
+	return keys
 }
 
 // MatchesID returns true if query matches the finding's primary ID or any alias (case-insensitive).

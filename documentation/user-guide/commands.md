@@ -354,6 +354,7 @@ vigil ci [flags] [path]
   - `low`, `medium`, `high`, `critical`
 - `--fail-on-cvss <score>` - Fail if any CVSS score ≥ threshold (0.0-10.0)
 - `--fail-on-scan-error` - Fail CI gate if any dependency fails vulnerability lookup (default: `true`)
+- `--fail-on-unsupported` - Fail CI gate if any dependency has unresolved or unsupported metadata (default: `true`)
 - `--skip-devdeps` - Skip development dependencies during scan (default: `false`)
 - `--lockfile <filename>` - Explicitly specify lock file name (e.g. `go.mod`, `package-lock.json`)
 - `--use-cache` - Evaluate `.vigil.cache` instead of running a fresh scan; strictly requires matching lock file SHA-256 hash and cache age within `--max-cache-age` (default: `false`)
@@ -427,12 +428,12 @@ vigil explain CVE-2026-0001 . --policy vigil.yaml --baseline .vigil.baseline.jso
 
 ## vigil baseline
 
-Write a deterministic JSON baseline snapshot of current findings from `.vigil.cache` for future delta analysis.
+Write a deterministic JSON baseline snapshot of current findings from `.vigil.cache` for future delta analysis. Refuses to write a baseline if the cache is stale, does not match the current lock file SHA-256 hash, or has incomplete scan coverage (`FailedPackages > 0` or `UnsupportedPackages > 0`).
 
 ### Synopsis
 
 ```bash
-vigil baseline [path] [--output <file>]
+vigil baseline [path] [--output <file>] [--lockfile <name>] [--max-cache-age <duration>]
 ```
 
 ### Example

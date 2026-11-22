@@ -4,11 +4,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/guttenbergovitz/vigil-cli/internal/policy"
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
 
-func TestEvaluateCIGateFailOnScanError(t *testing.T) {
-	result := &types.ScanResult{
+func TestEvaluateCIGateFailOnScanErrorAndUnsupported(t *testing.T) {
+	failedResult := &types.ScanResult{
 		Coverage: types.ScanCoverage{
 			TotalPackages:   5,
 			ScannedPackages: 4,
@@ -16,22 +17,43 @@ func TestEvaluateCIGateFailOnScanError(t *testing.T) {
 		},
 	}
 
-	// Default policy: fail when scan is incomplete even if 0 vulnerabilities were reported.
-	outcome := EvaluateCIGate(result, CIGateOptions{
-		MinSeverity:     types.High,
-		FailOnScanError: true,
+	outcome := EvaluateCIGate(failedResult, CIGateOptions{
+		MinSeverity:       types.High,
+		FailOnScanError:   true,
+		FailOnUnsupported: true,
 	})
 	if outcome.ExitCode != 2 {
 		t.Errorf("ExitCode = %d, want 2 when FailOnScanError=true and FailedPackages=1", outcome.ExitCode)
 	}
+	if outcome.Evaluation.EvidenceState != policy.EvidencePartial {
+		t.Errorf("EvidenceState = %q, want %q", outcome.Evaluation.EvidenceState, policy.EvidencePartial)
+	}
+
+	// UnsupportedPackages > 0 must also fail by default.
+	unsupportedResult := &types.ScanResult{
+		Coverage: types.ScanCoverage{
+			TotalPackages:       3,
+			ScannedPackages:     2,
+			UnsupportedPackages: 1,
+		},
+	}
+	unsupportedOutcome := EvaluateCIGate(unsupportedResult, CIGateOptions{
+		MinSeverity:       types.High,
+		FailOnScanError:   true,
+		FailOnUnsupported: true,
+	})
+	if unsupportedOutcome.ExitCode != 2 {
+		t.Errorf("ExitCode = %d, want 2 when FailOnUnsupported=true and UnsupportedPackages=1", unsupportedOutcome.ExitCode)
+	}
 
 	// Explicit opt-out allows gate to pass if no threshold violations occurred.
-	outcomeOptOut := EvaluateCIGate(result, CIGateOptions{
-		MinSeverity:     types.High,
-		FailOnScanError: false,
+	outcomeOptOut := EvaluateCIGate(failedResult, CIGateOptions{
+		MinSeverity:       types.High,
+		FailOnScanError:   false,
+		FailOnUnsupported: false,
 	})
 	if outcomeOptOut.ExitCode != 0 {
-		t.Errorf("ExitCode = %d, want 0 when FailOnScanError=false and no vulns", outcomeOptOut.ExitCode)
+		t.Errorf("ExitCode = %d, want 0 when both opt-outs disabled and no vulns", outcomeOptOut.ExitCode)
 	}
 }
 
@@ -43,8 +65,10 @@ func TestEvaluateCIGateSeverityAndCVSSThresholds(t *testing.T) {
 		},
 		Dependencies: []types.Dependency{
 			{
-				Name:    "express",
-				Version: "4.18.0",
+				Name:       "express",
+				Version:    "4.18.0",
+				Ecosystem:  types.EcosystemNPM,
+				ScanStatus: types.StatusScanned,
 				Vulnerabilities: []types.Vulnerability{
 					{ID: "CVE-2024-0001", Severity: types.High, CVSSScore: 7.5},
 					{ID: "CVE-2024-0002", Severity: types.Low, CVSSScore: 2.5},
@@ -54,9 +78,10 @@ func TestEvaluateCIGateSeverityAndCVSSThresholds(t *testing.T) {
 	}
 
 	outcome := EvaluateCIGate(result, CIGateOptions{
-		MinSeverity:     types.High,
-		FailOnCVSS:      8.0,
-		FailOnScanError: true,
+		MinSeverity:       types.High,
+		FailOnCVSS:        8.0,
+		FailOnScanError:   true,
+		FailOnUnsupported: true,
 	})
 	if outcome.ExitCode != 1 {
 		t.Errorf("ExitCode = %d, want 1", outcome.ExitCode)

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-11-22
+
+### Fixed
+
+- **Blocked incomplete scans when `UnsupportedPackages > 0`**
+  - Both `policy.Evaluate` and `vigil ci` now enforce `--fail-on-unsupported` (default: `true`) alongside `--fail-on-scan-error`, preventing unresolved Maven or unsupported dependencies from silently producing a passing CI gate.
+- **Separated `EvidenceState` from `Decision`**
+  - Added `EvidenceState` (`COMPLETE`, `PARTIAL`, `UNVERIFIED`, `INVALID`) and `EvidenceNotes` to `policy.EvaluationResult` so evidence completeness is always surfaced independently from `ALLOW` / `REVIEW` / `BLOCK`.
+- **Hardened policy exceptions and default policy semantics**
+  - Extended `policy.Exception` with scope constraints (`package`, `version`, `ecosystem`, `max_severity`, `approval_id`) and explicit `AcceptedRisk` marking (formally accepted risk is never presented as proof of safety and never overrides incomplete scans).
+  - Updated `DefaultPolicy()` so previously observed `HIGH` vulnerabilities in production remain subject to `REVIEW` unless formally accepted via an active exception.
+- **Strict YAML policy validation**
+  - Enabled `yaml.Decoder.KnownFields(true)` in `policy.ParsePolicy` and added validation for `version: 1`, non-empty `rules`, `min_cvss` range (`0.0–10.0`), contradictory severity bounds, and required exception metadata.
+- **Unified CI evaluation engine**
+  - Routed both CLI threshold mode (`--fail-on` / `--fail-on-cvss`) and `--policy` mode through `internal/policy` via `PolicyFromThresholds`.
+- **PURL-qualified finding keys, safe `vigil baseline`, and `not_observed` delta state**
+  - Updated `policy.Finding.Key` to `<advisory-id>|<purl>` with alias matching across `GHSA-*` and `CVE-*`.
+  - Updated `vigil baseline` to require a fresh, hash-verified, and complete scan (`FailedPackages == 0 && UnsupportedPackages == 0`).
+  - Updated `policy.ComputeDelta` to classify missing findings from unscanned/failed/unsupported packages as `NotObserved` rather than `Resolved`.
+- **Fixed CLI flag ordering and cache freshness warnings**
+  - Added flag reordering for `vigil explain`, `vigil baseline`, and `vigil ci` so flags work both before and after positional arguments.
+  - Added cache staleness, hash-mismatch, and incomplete-coverage warnings to `vigil explain`.
+- **Atomic cache persistence**
+  - Updated `lockfile.SaveCache` to write via a temporary file + `fsync` + `os.Rename`.
+- **Added negative invariant regression tests**
+  - Added dedicated tests covering all six correctness invariants (unsupported packages, incomplete delta `NotObserved`, scoped exception boundaries, strict YAML rejection, GHSA/CVE alias stability, and byte-for-byte deterministic evaluation).
+
 ## [2.2.0] - 2026-11-22
 
 ### Added
@@ -319,7 +346,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release gate recommendations
 - CI/CD integration with configurable failure thresholds
 
-[Unreleased]: https://github.com/guttenbergovitz/vigil-cli/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/guttenbergovitz/vigil-cli/compare/v2.2.1...HEAD
+[2.2.1]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.2.1
 [2.2.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.2.0
 [2.1.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.1.0
 [2.0.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.0.0

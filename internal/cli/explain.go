@@ -12,18 +12,26 @@ import (
 
 	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
 	"github.com/guttenbergovitz/vigil-cli/internal/policy"
+	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
 
 // Explain executes the `vigil explain <vuln-id>` command, printing an auditable breakdown
-// of why a vulnerability is allowed, flagged for review, or blocked, together with any
-// missing evidence required to reach a higher-confidence decision.
+// of why a vulnerability is allowed, flagged for review, or blocked, together with evidence
+// state, freshness warnings, and missing evidence.
 func Explain(args []string) error {
 	fs := flag.NewFlagSet("explain", flag.ContinueOnError)
 	policyPath := fs.String("policy", "", "Path to YAML policy file (defaults to built-in policy)")
 	baselinePath := fs.String("baseline", "", "Path to baseline JSON file for delta analysis")
 	format := fs.String("format", "text", "Output format (text, json)")
+	maxCacheAge := fs.Duration("max-cache-age", 24*time.Hour, "Age threshold after which a stale cache warning is displayed")
 
-	if err := fs.Parse(args); err != nil {
+	reordered := reorderFlagsFirst(args, map[string]bool{
+		"policy":        true,
+		"baseline":      true,
+		"format":        true,
+		"max-cache-age": true,
+	})
+	if err := fs.Parse(reordered); err != nil {
 		return fmt.Errorf("parse flags: %w", err)
 	}
 
@@ -47,6 +55,8 @@ func Explain(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load cache (run `vigil scan` first): %w", err)
 	}
+
+	warnings := checkExplainCacheWarnings(absPath, result, *maxCacheAge, time.Now().UTC())
 
 	pol := policy.DefaultPolicy()
 	if *policyPath != "" {
@@ -79,18 +89,58 @@ func Explain(args []string) error {
 
 	switch *format {
 	case "json":
+		payload := struct {
+			EvidenceState policy.EvidenceState     `json:"evidence_state"`
+			Warnings      []string                 `json:"warnings,omitempty"`
+			Findings      []policy.FindingDecision `json:"findings"`
+		}{
+			EvidenceState: eval.EvidenceState,
+			Warnings:      warnings,
+			Findings:      matched,
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(matched)
+		return enc.Encode(payload)
 	case "text":
-		renderExplanations(os.Stdout, matched)
+		renderExplanations(os.Stdout, matched, eval.EvidenceState, warnings)
 		return nil
 	default:
 		return fmt.Errorf("unknown format: %s (allowed: text, json)", *format)
 	}
 }
 
-func renderExplanations(out io.Writer, decisions []policy.FindingDecision) {
+func checkExplainCacheWarnings(absPath string, result *types.ScanResult, maxAge time.Duration, now time.Time) []string {
+	var warnings []string
+	if result == nil {
+		return warnings
+	}
+	if maxAge > 0 && now.Sub(result.ScannedAt) > maxAge {
+		warnings = append(warnings, fmt.Sprintf("Cached scan is %s old (scanned at %s); re-run `vigil scan` for fresh results.",
+			now.Sub(result.ScannedAt).Round(time.Minute), result.ScannedAt.Format(time.RFC3339)))
+	}
+	if result.LockFile != "" {
+		lockFilePath := filepath.Join(absPath, result.LockFile)
+		if currentHash, err := lockfile.HashFile(lockFilePath); err == nil {
+			if result.LockFileHash != "" && currentHash != result.LockFileHash {
+				warnings = append(warnings, fmt.Sprintf("Lock file %q has changed since the cached scan; explanation may be stale.", result.LockFile))
+			}
+		}
+	}
+	if result.Coverage.FailedPackages > 0 || result.Coverage.UnsupportedPackages > 0 {
+		warnings = append(warnings, fmt.Sprintf("Cached scan had incomplete coverage (%d failed, %d unsupported package(s)).",
+			result.Coverage.FailedPackages, result.Coverage.UnsupportedPackages))
+	}
+	return warnings
+}
+
+func renderExplanations(out io.Writer, decisions []policy.FindingDecision, evidenceState policy.EvidenceState, warnings []string) {
+	for _, w := range warnings {
+		fmt.Fprintf(out, "WARNING: %s\n", w)
+	}
+	if len(warnings) > 0 {
+		fmt.Fprintf(out, "\n")
+	}
+
 	for i, fd := range decisions {
 		if i > 0 {
 			fmt.Fprintf(out, "\n───────────────────────────────────────────────────────────────────────────────\n\n")
@@ -108,9 +158,14 @@ func renderExplanations(out io.Writer, decisions []policy.FindingDecision) {
 		}
 
 		fmt.Fprintf(out, "%s  [%s]\n", f.ID, fd.Decision)
+		fmt.Fprintf(out, "Evidence State:      %s\n", evidenceState)
+		if fd.AcceptedRisk {
+			fmt.Fprintf(out, "Risk Status:         FORMALLY ACCEPTED RISK (not proof of safety)\n")
+		}
 		if len(f.Aliases) > 0 {
 			fmt.Fprintf(out, "Aliases:             %s\n", strings.Join(f.Aliases, ", "))
 		}
+		fmt.Fprintf(out, "Component PURL:      %s\n", f.PURL)
 		fmt.Fprintf(out, "Package:             %s@%s (%s, %s, %s)\n", f.Package, f.Version, f.Ecosystem, f.DependencyType, scope)
 		fmt.Fprintf(out, "Severity:            %s", strings.ToUpper(string(f.Severity)))
 		if f.CVSSScore > 0 {

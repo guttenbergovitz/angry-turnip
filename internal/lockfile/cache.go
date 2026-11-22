@@ -6,25 +6,50 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
 
-// SaveCache writes scan results to cache file (.vigil.cache).
+// SaveCache atomically writes scan results to the cache file (.vigil.cache) using a
+// temporary file in the same directory followed by os.Rename so an interrupted process
+// never leaves a partially written or corrupted snapshot.
 func SaveCache(path string, result *types.ScanResult) error {
-	file, err := os.Create(path)
+	dir := filepath.Dir(path)
+	tmpFile, err := os.CreateTemp(dir, ".vigil.cache.*.tmp")
 	if err != nil {
-		return fmt.Errorf("create cache file: %w", err)
+		return fmt.Errorf("create temp cache file: %w", err)
 	}
-	defer file.Close()
+	tmpPath := tmpFile.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
 
-	encoder := json.NewEncoder(file)
+	encoder := json.NewEncoder(tmpFile)
 	encoder.SetIndent("", "  ")
 
 	if err := encoder.Encode(result); err != nil {
+		_ = tmpFile.Close()
 		return fmt.Errorf("encode cache: %w", err)
 	}
 
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("sync cache file: %w", err)
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close temp cache file: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("commit cache file: %w", err)
+	}
+
+	cleanup = false
 	return nil
 }
 
@@ -44,12 +69,12 @@ func LoadCache(path string) (*types.ScanResult, error) {
 	return &result, nil
 }
 
-// IsCacheValid checks if cache is still valid based on lock file hash.
+// IsCacheValid checks whether the cached hash matches the current lock file hash.
 func IsCacheValid(cachedHash, currentHash string) bool {
-	return cachedHash == currentHash
+	return cachedHash != "" && cachedHash == currentHash
 }
 
-// HashFile computes SHA256 hash of a file.
+// HashFile computes the SHA-256 hex digest of a file.
 func HashFile(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
