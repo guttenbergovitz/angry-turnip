@@ -35,6 +35,7 @@ type Dependency struct {
 	Ecosystem       Ecosystem         // Package manager ecosystem (npm, PyPI, Go, Cargo, etc.)
 	Type            DependencyType    // Production or development classification
 	Direct          bool              // Whether declared directly or pulled in transitively
+	Ambiguous       bool              // True when parent-child edge could not be uniquely resolved
 	DependsOn       []string          // Canonical "name@version" keys of direct child dependencies
 	ReleasedAt      *time.Time        // Package release date (informational metadata only)
 	ScanStatus      PackageScanStatus // Explicit scan outcome for this package
@@ -132,6 +133,50 @@ type ScanCoverage struct {
 	Errors              []PackageScanError
 }
 
+// InputKind distinguishes factual input artifact types (lockfile vs manifest) independently
+// from the achieved resolution completeness.
+type InputKind string
+
+const (
+	InputKindLockfile InputKind = "lockfile"
+	InputKindManifest InputKind = "manifest"
+)
+
+// ResolutionCompleteness describes the validated quality of dependency graph resolution.
+type ResolutionCompleteness string
+
+const (
+	ResolutionComplete  ResolutionCompleteness = "complete"
+	ResolutionPartial   ResolutionCompleteness = "partial"
+	ResolutionAmbiguous ResolutionCompleteness = "ambiguous"
+)
+
+// UnresolvedDependency records a manifest or lockfile entry whose version could not be determined.
+type UnresolvedDependency struct {
+	Package string `json:"package"`
+	Reason  string `json:"reason"`
+}
+
+// AmbiguousDependency records a parent-to-child dependency reference that matched multiple
+// candidate versions in the lockfile and therefore could not be assigned a unique edge.
+type AmbiguousDependency struct {
+	Parent     string   `json:"parent"`
+	Dependency string   `json:"dependency"`
+	Candidates []string `json:"candidates"`
+	Reason     string   `json:"reason"`
+}
+
+// ResolutionEvidence separates factual input type from validated dependency resolution completeness,
+// surfacing unresolved entries, ambiguous multi-version edges, and parser/format limitations.
+type ResolutionEvidence struct {
+	InputKind       InputKind              `json:"input_kind"`
+	ResolverVersion string                 `json:"resolver_version"`
+	Completeness    ResolutionCompleteness `json:"completeness"`
+	Unresolved      []UnresolvedDependency `json:"unresolved,omitempty"`
+	Ambiguous       []AmbiguousDependency  `json:"ambiguous,omitempty"`
+	Limitations     []string               `json:"limitations,omitempty"`
+}
+
 // ScanResult contains the results and coverage metadata of a single scan operation.
 type ScanResult struct {
 	Version       int
@@ -142,6 +187,7 @@ type ScanResult struct {
 	SkipDevDeps   bool   // Whether development dependencies were excluded from scope
 	Dependencies  []Dependency
 	Coverage      ScanCoverage
+	Resolution    ResolutionEvidence `json:"resolution"`
 	ThreatIntel   ThreatIntelMetadata
 	TotalVulns    int
 	CriticalVulns int

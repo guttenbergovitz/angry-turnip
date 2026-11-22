@@ -10,5 +10,8 @@
   ],
   "known_historical_cves": [
     {"purl": "pkg:pypi/urllib3@1.26.4", "cve": "CVE-2021-33503"}
+  ],
+  "verified_negative_cves": [
+    {"purl": "pkg:pypi/pytest@7.4.0", "cve": "CVE-2020-29651"}
   ]
 }

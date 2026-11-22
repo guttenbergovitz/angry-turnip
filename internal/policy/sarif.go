@@ -185,6 +185,19 @@ func WriteSARIF(out io.Writer, lockFile string, eval EvaluationResult) error {
 		)
 	}
 
+	if eval.Resolution != nil && len(eval.Resolution.Ambiguous) > 0 {
+		addDiagnosticResult(
+			"VIGIL-RESOLUTION-AMBIGUOUS",
+			"Ambiguous dependency graph edges across multiple lockfile package versions",
+			"warning",
+			fmt.Sprintf("Dependency graph contains %d ambiguous multi-version edge(s) that were left unlinked rather than fabricated.", len(eval.Resolution.Ambiguous)),
+			map[string]interface{}{
+				"resolution_completeness": eval.Resolution.Completeness,
+				"ambiguous_edges":         eval.Resolution.Ambiguous,
+			},
+		)
+	}
+
 	doc := map[string]interface{}{
 		"$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
 		"version": "2.1.0",

@@ -68,6 +68,7 @@ func ParseCargoLockGraph(r io.Reader) (*types.DependencyGraph, error) {
 		sort.Strings(nodesByName[name])
 	}
 
+	ambiguousChildren := make(map[string]bool)
 	for _, pkg := range pkgs {
 		parentKey := strings.ToLower(strings.TrimSpace(pkg.Name)) + "@" + pkg.Version
 		for _, dep := range pkg.Deps {
@@ -82,8 +83,25 @@ func ParseCargoLockGraph(r io.Reader) (*types.DependencyGraph, error) {
 					continue
 				}
 			}
-			for _, childKey := range nodesByName[depNameLower] {
-				graph.AddEdge(parentKey, childKey)
+
+			candidates := nodesByName[depNameLower]
+			if len(candidates) == 1 {
+				graph.AddEdge(parentKey, candidates[0])
+			} else if len(candidates) > 1 {
+				// Multiple versions of the crate exist in Cargo.lock without an explicit version
+				// qualifier on this dependency entry: record ambiguity instead of fabricating edges.
+				graph.Ambiguous = append(graph.Ambiguous, types.AmbiguousDependency{
+					Parent:     parentKey,
+					Dependency: depNameLower,
+					Candidates: append([]string(nil), candidates...),
+					Reason:     "multiple crate versions present in Cargo.lock without version qualifier on dependency edge",
+				})
+				for _, candKey := range candidates {
+					ambiguousChildren[candKey] = true
+					if node := graph.Nodes[candKey]; node != nil {
+						node.Ambiguous = true
+					}
+				}
 			}
 		}
 	}
@@ -96,7 +114,7 @@ func ParseCargoLockGraph(r io.Reader) (*types.DependencyGraph, error) {
 	}
 
 	for key, node := range graph.Nodes {
-		if !childKeys[key] {
+		if !childKeys[key] && !ambiguousChildren[key] {
 			node.Direct = true
 			graph.Root = append(graph.Root, key)
 		}
@@ -104,6 +122,11 @@ func ParseCargoLockGraph(r io.Reader) (*types.DependencyGraph, error) {
 	sort.Strings(graph.Root)
 
 	graph.CalculateDepths()
+	for _, node := range graph.Nodes {
+		if node.Ambiguous && node.Depth == -1 {
+			node.Depth = 1
+		}
+	}
 	return graph, nil
 }
 

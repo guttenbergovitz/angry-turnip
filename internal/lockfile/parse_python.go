@@ -13,10 +13,14 @@ import (
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
 
-// pythonDep represents a dependency reference with an optional exact version pin.
+// pythonDep represents a dependency reference with an optional exact version pin,
+// version constraint specification, or environment marker.
 type pythonDep struct {
-	Name    string
-	Version string
+	Name       string
+	Version    string
+	Constraint string
+	Marker     string
+	Optional   bool
 }
 
 // pythonPackage holds metadata parsed from Python TOML/JSON lock files.
@@ -96,8 +100,10 @@ func buildPythonGraph(pkgs []pythonPackage) *types.DependencyGraph {
 		sort.Strings(nodesByName[name])
 	}
 
-	// Second pass: resolve dependency edges by exact (name, version) first, falling back
-	// to deterministically sorted candidate versions for that package name.
+	// Second pass: resolve dependency edges by exact (name, version) or version constraint.
+	// If multiple candidate versions remain ambiguous, do NOT fabricate edges; record
+	// AmbiguousDependency on the graph and mark candidates as Ambiguous.
+	ambiguousChildren := make(map[string]bool)
 	for _, pkg := range pkgs {
 		parentKey := strings.ToLower(strings.TrimSpace(pkg.Name)) + "@" + pkg.Version
 		for _, dep := range pkg.Deps {
@@ -112,13 +118,55 @@ func buildPythonGraph(pkgs []pythonPackage) *types.DependencyGraph {
 					continue
 				}
 			}
-			for _, childKey := range nodesByName[depNameLower] {
-				graph.AddEdge(parentKey, childKey)
+
+			candidates := nodesByName[depNameLower]
+			if len(candidates) == 0 {
+				continue
+			}
+			if len(candidates) == 1 {
+				graph.AddEdge(parentKey, candidates[0])
+				continue
+			}
+
+			// Multiple versions exist: try to disambiguate using the version constraint.
+			var matched []string
+			if dep.Constraint != "" && dep.Constraint != "*" {
+				for _, candKey := range candidates {
+					if node := graph.Nodes[candKey]; node != nil && matchesPythonVersionSpec(node.Version, dep.Constraint) {
+						matched = append(matched, candKey)
+					}
+				}
+			}
+			if len(matched) == 1 {
+				graph.AddEdge(parentKey, matched[0])
+				continue
+			}
+			if len(matched) == 0 {
+				matched = append([]string(nil), candidates...)
+			}
+
+			reason := "multiple package versions present in lockfile without unique version pin"
+			if dep.Marker != "" {
+				reason = fmt.Sprintf("multiple package versions gated by environment marker (%s)", dep.Marker)
+			} else if dep.Constraint != "" {
+				reason = fmt.Sprintf("version constraint %q matched %d candidate versions", dep.Constraint, len(matched))
+			}
+			graph.Ambiguous = append(graph.Ambiguous, types.AmbiguousDependency{
+				Parent:     parentKey,
+				Dependency: depNameLower,
+				Candidates: matched,
+				Reason:     reason,
+			})
+			for _, candKey := range matched {
+				ambiguousChildren[candKey] = true
+				if node := graph.Nodes[candKey]; node != nil {
+					node.Ambiguous = true
+				}
 			}
 		}
 	}
 
-	// Identify root nodes (nodes without parents) in deterministic order.
+	// Identify root nodes (nodes without parents and not only ambiguously referenced).
 	childKeys := make(map[string]bool)
 	for _, node := range graph.Nodes {
 		for _, child := range node.Children {
@@ -127,7 +175,7 @@ func buildPythonGraph(pkgs []pythonPackage) *types.DependencyGraph {
 	}
 
 	for key, node := range graph.Nodes {
-		if !childKeys[key] {
+		if !childKeys[key] && !ambiguousChildren[key] {
 			node.Direct = true
 			graph.Root = append(graph.Root, key)
 		}
@@ -135,6 +183,11 @@ func buildPythonGraph(pkgs []pythonPackage) *types.DependencyGraph {
 	sort.Strings(graph.Root)
 
 	graph.CalculateDepths()
+	for _, node := range graph.Nodes {
+		if node.Ambiguous && node.Depth == -1 {
+			node.Depth = 1
+		}
+	}
 	return graph
 }
 
@@ -199,10 +252,12 @@ func parseTOMLDepArray(items []any) []pythonDep {
 		case map[string]any:
 			name, _ := v["name"].(string)
 			ver, _ := v["version"].(string)
+			marker, _ := v["marker"].(string)
 			if strings.TrimSpace(name) != "" {
 				out = append(out, pythonDep{
 					Name:    strings.TrimSpace(name),
 					Version: strings.TrimSpace(ver),
+					Marker:  strings.TrimSpace(marker),
 				})
 			}
 		case string:
@@ -285,7 +340,13 @@ func parsePoetryLockPackages(r io.Reader) ([]pythonPackage, error) {
 
 		deps := make([]pythonDep, 0, len(depKeys))
 		for _, k := range depKeys {
-			deps = append(deps, pythonDep{Name: strings.TrimSpace(k)})
+			constraint, marker, optional := extractPoetryDepSpec(rawPkg.Dependencies[k])
+			deps = append(deps, pythonDep{
+				Name:       strings.TrimSpace(k),
+				Constraint: constraint,
+				Marker:     marker,
+				Optional:   optional,
+			})
 		}
 
 		pkgs = append(pkgs, pythonPackage{
@@ -298,6 +359,169 @@ func parsePoetryLockPackages(r io.Reader) ([]pythonPackage, error) {
 	}
 
 	return pkgs, nil
+}
+
+func extractPoetryDepSpec(raw any) (constraint, marker string, optional bool) {
+	switch v := raw.(type) {
+	case string:
+		return strings.TrimSpace(v), "", false
+	case map[string]any:
+		ver, _ := v["version"].(string)
+		m, _ := v["markers"].(string)
+		opt, _ := v["optional"].(bool)
+		return strings.TrimSpace(ver), strings.TrimSpace(m), opt
+	case []any:
+		// Array of environment-specific dependency tables in poetry.lock: cannot be reduced
+		// to a single static constraint without target environment evaluation.
+		var markers []string
+		for _, elem := range v {
+			if m, ok := elem.(map[string]any); ok {
+				if mk, ok := m["markers"].(string); ok && strings.TrimSpace(mk) != "" {
+					markers = append(markers, strings.TrimSpace(mk))
+				}
+			}
+		}
+		return "", strings.Join(markers, " | "), false
+	default:
+		return "", "", false
+	}
+}
+
+// matchesPythonVersionSpec evaluates common PEP 440 / Poetry version constraints
+// (==, !=, >=, <=, >, <, ^, ~) against a concrete version string to disambiguate
+// multi-version lockfile packages when possible.
+func matchesPythonVersionSpec(version, spec string) bool {
+	version = strings.TrimSpace(version)
+	spec = strings.TrimSpace(spec)
+	if version == "" || spec == "" || spec == "*" {
+		return true
+	}
+
+	// Handle Caret (^1.2.3 -> >=1.2.3, <2.0.0)
+	if strings.HasPrefix(spec, "^") {
+		base := strings.TrimSpace(strings.TrimPrefix(spec, "^"))
+		vParts := parseNumericVersion(version)
+		bParts := parseNumericVersion(base)
+		if len(vParts) == 0 || len(bParts) == 0 {
+			return false
+		}
+		if compareVersionSlices(vParts, bParts) < 0 {
+			return false
+		}
+		upper := []int{bParts[0] + 1, 0, 0}
+		if bParts[0] == 0 && len(bParts) > 1 {
+			upper = []int{0, bParts[1] + 1, 0}
+		}
+		return compareVersionSlices(vParts, upper) < 0
+	}
+
+	// Handle comma-separated PEP 440 clauses (e.g. ">=1.26,<2.0")
+	for _, clause := range strings.Split(spec, ",") {
+		c := strings.TrimSpace(clause)
+		if c == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(c, "=="):
+			target := strings.TrimSpace(strings.TrimPrefix(c, "=="))
+			if strings.HasSuffix(target, ".*") {
+				prefix := strings.TrimSuffix(target, "*")
+				if !strings.HasPrefix(version, prefix) {
+					return false
+				}
+			} else if compareVersions(version, target) != 0 {
+				return false
+			}
+		case strings.HasPrefix(c, "!="):
+			target := strings.TrimSpace(strings.TrimPrefix(c, "!="))
+			if compareVersions(version, target) == 0 {
+				return false
+			}
+		case strings.HasPrefix(c, ">="):
+			if compareVersions(version, strings.TrimSpace(strings.TrimPrefix(c, ">="))) < 0 {
+				return false
+			}
+		case strings.HasPrefix(c, "<="):
+			if compareVersions(version, strings.TrimSpace(strings.TrimPrefix(c, "<="))) > 0 {
+				return false
+			}
+		case strings.HasPrefix(c, "~="):
+			base := strings.TrimSpace(strings.TrimPrefix(c, "~="))
+			if compareVersions(version, base) < 0 {
+				return false
+			}
+			bParts := parseNumericVersion(base)
+			vParts := parseNumericVersion(version)
+			if len(bParts) >= 2 && len(vParts) >= 1 && vParts[0] != bParts[0] {
+				return false
+			}
+		case strings.HasPrefix(c, ">"):
+			if compareVersions(version, strings.TrimSpace(strings.TrimPrefix(c, ">"))) <= 0 {
+				return false
+			}
+		case strings.HasPrefix(c, "<"):
+			if compareVersions(version, strings.TrimSpace(strings.TrimPrefix(c, "<"))) >= 0 {
+				return false
+			}
+		default:
+			if compareVersions(version, c) != 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func compareVersions(a, b string) int {
+	return compareVersionSlices(parseNumericVersion(a), parseNumericVersion(b))
+}
+
+func parseNumericVersion(v string) []int {
+	var out []int
+	num := 0
+	inDigits := false
+	for _, r := range v {
+		if r >= '0' && r <= '9' {
+			num = num*10 + int(r-'0')
+			inDigits = true
+		} else {
+			if inDigits {
+				out = append(out, num)
+				num = 0
+				inDigits = false
+			}
+			if r != '.' {
+				break
+			}
+		}
+	}
+	if inDigits {
+		out = append(out, num)
+	}
+	return out
+}
+
+func compareVersionSlices(a, b []int) int {
+	n := len(a)
+	if len(b) > n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		va, vb := 0, 0
+		if i < len(a) {
+			va = a[i]
+		}
+		if i < len(b) {
+			vb = b[i]
+		}
+		if va < vb {
+			return -1
+		}
+		if va > vb {
+			return 1
+		}
+	}
+	return 0
 }
 
 // ParsePipfileLock parses Pipfile.lock JSON format into Dependencies.

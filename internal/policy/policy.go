@@ -91,6 +91,7 @@ type EvaluationResult struct {
 	OverallDecision         Decision                   `json:"overall_decision"`
 	EvidenceState           EvidenceState              `json:"evidence_state"`
 	ResolutionScope         string                     `json:"resolution_scope,omitempty"`
+	Resolution              *types.ResolutionEvidence  `json:"resolution,omitempty"`
 	EvidenceNotes           []string                   `json:"evidence_notes,omitempty"`
 	ThreatIntel             *types.ThreatIntelMetadata `json:"threat_intel,omitempty"`
 	BaselineScopeCompatible *bool                      `json:"baseline_scope_compatible,omitempty"`
@@ -360,6 +361,11 @@ func ValidateEvidence(result *types.ScanResult) (EvidenceState, []string) {
 		notes = append(notes, "Resolution scope: go.mod module requirement graph (static modfile analysis without full Go toolchain MVS build list).")
 	case "flat-manifest":
 		notes = append(notes, "Resolution scope: flat requirements.txt manifest (direct pinned requirements only; transitive dependencies are not declared).")
+	case "flat-lockfile":
+		notes = append(notes, "Resolution scope: flat lockfile without parent-child dependency graph edges.")
+	}
+	for _, lim := range result.Resolution.Limitations {
+		notes = append(notes, lim)
 	}
 	if c.FailedPackages > 0 {
 		notes = append(notes, fmt.Sprintf("%d package(s) failed vulnerability lookup.", c.FailedPackages))
@@ -402,6 +408,10 @@ func Evaluate(result *types.ScanResult, pol Policy, baseline *Baseline, now time
 
 	if result != nil {
 		eval.ResolutionScope = result.Coverage.ResolutionScope
+		if result.Resolution.InputKind != "" || result.Resolution.Completeness != "" || len(result.Resolution.Ambiguous) > 0 || len(result.Resolution.Unresolved) > 0 {
+			resCopy := result.Resolution
+			eval.Resolution = &resCopy
+		}
 		eval.FailedPackages = result.Coverage.FailedPackages
 		eval.UnsupportedPackages = result.Coverage.UnsupportedPackages
 		eval.ScopeExclusions = result.Coverage.SkippedPackages

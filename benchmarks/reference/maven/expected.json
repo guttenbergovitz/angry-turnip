@@ -10,5 +10,8 @@
   ],
   "known_historical_cves": [
     {"purl": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1", "cve": "CVE-2021-44228"}
+  ],
+  "verified_negative_cves": [
+    {"purl": "pkg:maven/junit/junit@4.13.2", "cve": "CVE-2020-15250"}
   ]
 }

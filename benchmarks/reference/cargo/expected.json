@@ -10,5 +10,8 @@
   ],
   "known_historical_cves": [
     {"purl": "pkg:cargo/tokio@1.8.0", "cve": "CVE-2021-45710"}
+  ],
+  "verified_negative_cves": [
+    {"purl": "pkg:cargo/bytes@1.0.1", "cve": "CVE-2021-45710"}
   ]
 }

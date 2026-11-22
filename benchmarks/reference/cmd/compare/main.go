@@ -22,8 +22,9 @@ type expectedCVE struct {
 }
 
 type expectedFixture struct {
-	Ecosystem           string        `json:"ecosystem"`
-	KnownHistoricalCVEs []expectedCVE `json:"known_historical_cves"`
+	Ecosystem            string        `json:"ecosystem"`
+	KnownHistoricalCVEs  []expectedCVE `json:"known_historical_cves"`
+	VerifiedNegativeCVEs []expectedCVE `json:"verified_negative_cves"`
 }
 
 // scannerRun captures the execution state, total canonical finding count, and normalized (ID|PURL) keys.
@@ -53,9 +54,13 @@ func main() {
 			os.Exit(1)
 		}
 
-		expectedKeys := make(map[string]bool, len(exp.KnownHistoricalCVEs))
+		expectedPos := make(map[string]bool, len(exp.KnownHistoricalCVEs))
 		for _, item := range exp.KnownHistoricalCVEs {
-			expectedKeys[strings.ToUpper(item.CVE)+"|"+item.PURL] = true
+			expectedPos[strings.ToUpper(item.CVE)+"|"+item.PURL] = true
+		}
+		expectedNeg := make(map[string]bool, len(exp.VerifiedNegativeCVEs))
+		for _, item := range exp.VerifiedNegativeCVEs {
+			expectedNeg[strings.ToUpper(item.CVE)+"|"+item.PURL] = true
 		}
 
 		vigilRun := runVigil(fixtureDir)
@@ -65,33 +70,43 @@ func main() {
 
 		fmt.Printf("%-10s | %-24s | %-24s | %-24s | %-24s\n",
 			eco,
-			formatScore(vigilRun, expectedKeys),
-			formatScoreWithOverlap(osvRun, vigilRun, expectedKeys),
-			formatScoreWithOverlap(trivyRun, vigilRun, expectedKeys),
-			formatScoreWithOverlap(grypeRun, vigilRun, expectedKeys),
+			formatScore(vigilRun, expectedPos, expectedNeg),
+			formatScoreWithOverlap(osvRun, vigilRun, expectedPos, expectedNeg),
+			formatScoreWithOverlap(trivyRun, vigilRun, expectedPos, expectedNeg),
+			formatScoreWithOverlap(grypeRun, vigilRun, expectedPos, expectedNeg),
 		)
 	}
 }
 
-func formatScore(run scannerRun, expected map[string]bool) string {
+func formatScore(run scannerRun, expectedPos, expectedNeg map[string]bool) string {
 	if !strings.HasPrefix(run.Status, "OK") {
 		return run.Status
 	}
-	hits := 0
-	for k := range expected {
+	tp := 0
+	for k := range expectedPos {
 		if run.Findings[k] {
-			hits++
+			tp++
+		}
+	}
+	fp := 0
+	for k := range expectedNeg {
+		if run.Findings[k] {
+			fp++
 		}
 	}
 	tot := run.TotalFindings
 	if tot == 0 {
 		tot = len(run.Findings)
 	}
-	return fmt.Sprintf("%s (rec %d/%d, tot %d)", run.Status, hits, len(expected), tot)
+	precPct := 100
+	if tp+fp > 0 {
+		precPct = (tp * 100) / (tp + fp)
+	}
+	return fmt.Sprintf("%s (rec %d/%d, prec %d%%, tot %d)", run.Status, tp, len(expectedPos), precPct, tot)
 }
 
-func formatScoreWithOverlap(run, vigilRun scannerRun, expected map[string]bool) string {
-	base := formatScore(run, expected)
+func formatScoreWithOverlap(run, vigilRun scannerRun, expectedPos, expectedNeg map[string]bool) string {
+	base := formatScore(run, expectedPos, expectedNeg)
 	if !strings.HasPrefix(run.Status, "OK") || !strings.HasPrefix(vigilRun.Status, "OK") {
 		return base
 	}

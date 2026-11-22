@@ -629,6 +629,7 @@ func buildScanResultFromGraph(projectPath, lockFile, lockHash string, graph *typ
 			Ecosystem:       lockType.Ecosystem(),
 			Type:            node.Type,
 			Direct:          node.Direct,
+			Ambiguous:       node.Ambiguous,
 			DependsOn:       children,
 			ReleasedAt:      node.ReleasedAt,
 			ScanStatus:      node.ScanStatus,
@@ -637,6 +638,8 @@ func buildScanResultFromGraph(projectPath, lockFile, lockHash string, graph *typ
 		}
 		deps = append(deps, dep)
 	}
+
+	resolution := buildResolutionEvidence(graph, lockType)
 
 	result := &types.ScanResult{
 		Version:      1,
@@ -647,6 +650,7 @@ func buildScanResultFromGraph(projectPath, lockFile, lockHash string, graph *typ
 		SkipDevDeps:  skipDevDeps,
 		Dependencies: deps,
 		Coverage:     coverage,
+		Resolution:   resolution,
 	}
 
 	for _, dep := range deps {
@@ -683,9 +687,70 @@ func resolutionScopeForLockType(lockType lockfile.LockFileType) string {
 		return "go-mod-manifest"
 	case lockfile.RequirementsTxt:
 		return "flat-manifest"
+	case lockfile.PipfileLock, lockfile.GradleLock:
+		return "flat-lockfile"
 	default:
-		return "full-lockfile"
+		return "graph-lockfile"
 	}
+}
+
+func buildResolutionEvidence(graph *types.DependencyGraph, lockType lockfile.LockFileType) types.ResolutionEvidence {
+	ev := types.ResolutionEvidence{
+		InputKind:       types.InputKindLockfile,
+		ResolverVersion: "1",
+		Completeness:    types.ResolutionComplete,
+	}
+
+	switch lockType {
+	case lockfile.PomXml:
+		ev.InputKind = types.InputKindManifest
+		ev.Completeness = types.ResolutionPartial
+		ev.Limitations = append(ev.Limitations, "Maven pom.xml is a manifest (direct declarations and local parent POM hierarchy only; transitive dependencies require a lockfile or effective POM).")
+	case lockfile.GoModLock:
+		ev.InputKind = types.InputKindManifest
+		ev.Completeness = types.ResolutionPartial
+		ev.Limitations = append(ev.Limitations, "Go go.mod records module requirements without full Go toolchain MVS build list or parent-child edges.")
+	case lockfile.RequirementsTxt:
+		ev.InputKind = types.InputKindManifest
+		ev.Completeness = types.ResolutionPartial
+		ev.Limitations = append(ev.Limitations, "Python requirements.txt is a flat manifest without transitive dependency graph metadata.")
+	case lockfile.PipfileLock, lockfile.GradleLock:
+		ev.Completeness = types.ResolutionPartial
+		ev.Limitations = append(ev.Limitations, "Lockfile format does not encode parent-child dependency graph edges (all packages treated as root depth).")
+	}
+
+	if graph != nil {
+		keys := make([]string, 0, len(graph.Nodes))
+		for k := range graph.Nodes {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			node := graph.Nodes[k]
+			if node.ScanStatus == types.StatusUnsupported {
+				reason := node.ScanError
+				if reason == "" {
+					reason = "unresolved dependency version or unsupported metadata"
+				}
+				ev.Unresolved = append(ev.Unresolved, types.UnresolvedDependency{
+					Package: node.Name,
+					Reason:  reason,
+				})
+			}
+		}
+		if len(graph.Ambiguous) > 0 {
+			ev.Ambiguous = append([]types.AmbiguousDependency(nil), graph.Ambiguous...)
+			ev.Limitations = append(ev.Limitations, fmt.Sprintf("%d dependency edge(s) matched multiple candidate versions in the lockfile and were left unlinked.", len(graph.Ambiguous)))
+		}
+	}
+
+	if len(ev.Unresolved) > 0 {
+		ev.Completeness = types.ResolutionPartial
+	} else if len(ev.Ambiguous) > 0 && ev.Completeness == types.ResolutionComplete {
+		ev.Completeness = types.ResolutionAmbiguous
+	}
+
+	return ev
 }
 
 // buildGraphFromDeps constructs a DependencyGraph from flat Dependencies for lock files without native graph support.

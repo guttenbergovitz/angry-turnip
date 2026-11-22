@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-11-22
+
+### Added
+
+- **First-Class `ResolutionEvidence` Model (`internal/types`, `internal/scan`, `internal/policy`)**
+  - Separated factual input artifact type (`InputKind`: `lockfile` vs `manifest`) from validated dependency resolution completeness (`ResolutionCompleteness`: `complete`, `partial`, `ambiguous`).
+  - Added structured `UnresolvedDependency`, `AmbiguousDependency`, and `Limitations` lists to `ScanResult.Resolution` and `EvaluationResult.Resolution`, with corresponding `VIGIL-RESOLUTION-AMBIGUOUS` SARIF diagnostic rules and `Finding.MissingEvidence` entries (`unambiguous dependency graph edge`).
+- **PEP 440 / Poetry Version Constraint Disambiguation & Ambiguity Refusal (`internal/lockfile`)**
+  - Added `matchesPythonVersionSpec` (`==`, `!=`, `>=`, `<=`, `>`, `<`, `~=`, `^`) to disambiguate multi-version dependencies in `poetry.lock` and `uv.lock` when a version constraint uniquely identifies one candidate.
+  - When multiple candidate versions remain ambiguous (such as environment-marker array dependencies in `poetry.lock` or unversioned multi-version references in `Cargo.lock` / `uv.lock`), Vigil refuses to fabricate edges — recording `AmbiguousDependency` with the candidate list and keeping candidates unpromoted (`Direct: false`).
+- **Verified Negative Controls for Benchmark Precision (`benchmarks/reference/`)**
+  - Added `verified_negative_cves` across all six ecosystem `expected.json` manifests (patched/unaffected package versions) and updated `reference_test.go` and `benchmarks/reference/cmd/compare` to compute both recall (`TP / (TP + FN)`) and precision (`TP / (TP + FP)`).
+
 ## [2.6.1] - 2026-11-22
 
 ### Fixed

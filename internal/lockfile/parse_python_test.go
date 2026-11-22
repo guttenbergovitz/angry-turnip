@@ -237,3 +237,68 @@ version = "1.26.4"
 		}
 	}
 }
+
+func TestPythonMultiVersionConstraintDisambiguationAndAmbiguityRefusal(t *testing.T) {
+	// Case 1: Poetry lockfile with 2 versions of urllib3, disambiguated by ">=1.26,<2.0".
+	disambiguated := `
+[[package]]
+name = "app"
+version = "1.0.0"
+
+[package.dependencies]
+urllib3 = ">=1.26,<2.0"
+
+[[package]]
+name = "urllib3"
+version = "1.26.4"
+
+[[package]]
+name = "urllib3"
+version = "2.0.7"
+`
+	g1, err := ParsePoetryLockGraph(strings.NewReader(disambiguated))
+	if err != nil {
+		t.Fatalf("ParsePoetryLockGraph error: %v", err)
+	}
+	if len(g1.Ambiguous) != 0 {
+		t.Errorf("expected 0 ambiguous edges when constraint uniquely selects 1.26.4, got %+v", g1.Ambiguous)
+	}
+	if app := g1.Nodes["app@1.0.0"]; app == nil || len(app.Children) != 1 || app.Children[0] != "urllib3@1.26.4" {
+		t.Errorf("expected app@1.0.0 to link only to urllib3@1.26.4, got %+v", app)
+	}
+
+	// Case 2: Poetry lockfile with environment-marker array dependencies matching 2 versions
+	// without target environment evaluation -> must NOT fabricate edges; must record Ambiguous.
+	ambiguousTOML := `
+[[package]]
+name = "app"
+version = "1.0.0"
+
+[package.dependencies]
+urllib3 = [
+    {version = ">=1.26,<2.0", markers = "python_version < '3.11'"},
+    {version = ">=2.0", markers = "python_version >= '3.11'"},
+]
+
+[[package]]
+name = "urllib3"
+version = "1.26.4"
+
+[[package]]
+name = "urllib3"
+version = "2.0.7"
+`
+	g2, err := ParsePoetryLockGraph(strings.NewReader(ambiguousTOML))
+	if err != nil {
+		t.Fatalf("ParsePoetryLockGraph error on ambiguous TOML: %v", err)
+	}
+	if app := g2.Nodes["app@1.0.0"]; app == nil || len(app.Children) != 0 {
+		t.Errorf("expected 0 fabricated edges on app@1.0.0 when resolution is ambiguous, got children=%v", app.Children)
+	}
+	if len(g2.Ambiguous) != 1 || len(g2.Ambiguous[0].Candidates) != 2 {
+		t.Errorf("expected 1 AmbiguousDependency with 2 candidates, got %+v", g2.Ambiguous)
+	}
+	if g2.Nodes["urllib3@1.26.4"].Direct || g2.Nodes["urllib3@2.0.7"].Direct {
+		t.Error("expected ambiguously referenced child nodes not to be falsely promoted to Direct=true")
+	}
+}

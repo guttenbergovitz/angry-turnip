@@ -9,5 +9,8 @@
   ],
   "known_historical_cves": [
     {"purl": "pkg:composer/guzzlehttp/guzzle@7.3.0", "cve": "CVE-2022-31042"}
+  ],
+  "verified_negative_cves": [
+    {"purl": "pkg:composer/guzzlehttp/promises@1.4.1", "cve": "CVE-2022-31042"}
   ]
 }

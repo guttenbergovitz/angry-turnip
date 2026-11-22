@@ -10,5 +10,9 @@
   ],
   "known_historical_cves": [
     {"purl": "pkg:golang/golang.org/x/net@v0.18.0", "cve": "CVE-2023-45288"}
+  ],
+  "verified_negative_cves": [
+    {"purl": "pkg:golang/golang.org/x/net@v0.18.0", "cve": "CVE-2023-44487"},
+    {"purl": "pkg:golang/golang.org/x/text@v0.13.0", "cve": "CVE-2022-32149"}
   ]
 }

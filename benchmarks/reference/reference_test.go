@@ -36,6 +36,7 @@ type expectedFixture struct {
 	ExpectedEvidenceState string              `json:"expected_evidence_state"`
 	ExpectedComponents    []expectedComponent `json:"expected_components"`
 	KnownHistoricalCVEs   []expectedCVE       `json:"known_historical_cves"`
+	VerifiedNegativeCVEs  []expectedCVE       `json:"verified_negative_cves"`
 }
 
 // fixtureVulnSource deterministically returns the known historical CVEs keyed by canonical PURL
@@ -164,7 +165,8 @@ func TestReferenceFixturesResolutionAndCoverage(t *testing.T) {
 				}
 			}
 
-			// 3. Verify all expected historical CVEs appear as canonical findings.
+			// 3. Verify all expected historical CVEs appear as canonical findings (100% recall)
+			// and zero verified negative CVEs appear (100% precision on ground-truth controls).
 			eval := policy.Evaluate(result, policy.DefaultPolicy(), nil, time.Now().UTC())
 			foundKeys := make(map[string]bool, len(eval.Decisions))
 			for _, fd := range eval.Decisions {
@@ -175,6 +177,15 @@ func TestReferenceFixturesResolutionAndCoverage(t *testing.T) {
 				if !foundKeys[wantKey] {
 					t.Errorf("expected canonical finding %s not found in evaluation (got %v)", wantKey, foundKeys)
 				}
+			}
+			for _, negCVE := range expected.VerifiedNegativeCVEs {
+				forbiddenKey := negCVE.CVE + "|" + negCVE.PURL
+				if foundKeys[forbiddenKey] {
+					t.Errorf("FALSE POSITIVE: verified negative control %s appeared in evaluation", forbiddenKey)
+				}
+			}
+			if result.Resolution.InputKind == "" || result.Resolution.Completeness == "" {
+				t.Errorf("expected populated ResolutionEvidence, got %+v", result.Resolution)
 			}
 		})
 	}

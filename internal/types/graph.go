@@ -9,6 +9,7 @@ type DependencyNode struct {
 	Ecosystem       Ecosystem         // Package ecosystem (npm, PyPI, Go, Cargo, etc.)
 	Type            DependencyType    // Production or development classification
 	Direct          bool              // Whether direct dependency or transitive
+	Ambiguous       bool              // True when incoming parent edge was ambiguous across versions
 	Depth           int               // 0 = direct, 1 = dependency of direct, etc.
 	Parents         []string          // Slice of "name@version" keys that depend on this package
 	Children        []string          // Slice of "name@version" keys that this package depends on
@@ -23,6 +24,7 @@ type DependencyGraph struct {
 	Ecosystem Ecosystem                  // Overall ecosystem of graph
 	Nodes     map[string]*DependencyNode // Keyed by "name@version"
 	Root      []string                   // Direct dependencies: []"name@version"
+	Ambiguous []AmbiguousDependency      // Dependency edges that matched >1 candidate version
 }
 
 // NewDependencyGraph creates a new empty graph.

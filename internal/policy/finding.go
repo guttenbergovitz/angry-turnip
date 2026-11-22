@@ -34,6 +34,7 @@ type Finding struct {
 	Ecosystem            types.Ecosystem                 `json:"ecosystem"`
 	DependencyType       types.DependencyType            `json:"dependency_type"`
 	Direct               bool                            `json:"direct"`
+	AmbiguousGraph       bool                            `json:"ambiguous_graph,omitempty"`
 	Severity             types.Severity                  `json:"severity"`
 	CVSSScore            float64                         `json:"cvss_score"`
 	CVSSVector           string                          `json:"cvss_vector,omitempty"`
@@ -123,6 +124,7 @@ func BuildFindings(result *types.ScanResult) []Finding {
 				Ecosystem:         dep.Ecosystem,
 				DependencyType:    dep.Type,
 				Direct:            dep.Direct,
+				AmbiguousGraph:    dep.Ambiguous,
 				Severity:          sev,
 				CVSSScore:         vuln.CVSSScore,
 				CVSSVector:        strings.TrimSpace(vuln.CVSSVector),
@@ -274,6 +276,7 @@ func mergeComponentFindings(group []Finding) Finding {
 	out.EPSSDate = ""
 	out.EPSSStatus = ""
 	out.Direct = false
+	out.AmbiguousGraph = false
 	out.DependencyType = types.Development
 
 	for _, m := range sorted {
@@ -282,6 +285,9 @@ func mergeComponentFindings(group []Finding) Finding {
 		allEvidence = append(allEvidence, m.SourceEvidence...)
 		if m.Summary != "" {
 			summaries = append(summaries, m.Summary)
+		}
+		if m.AmbiguousGraph {
+			out.AmbiguousGraph = true
 		}
 		if m.Severity != types.Unknown && (out.Severity == types.Unknown || m.Severity.HigherOrEqualThan(out.Severity)) {
 			out.Severity = m.Severity
@@ -376,7 +382,7 @@ func mergeComponentFindings(group []Finding) Finding {
 	}
 	out.ExploitType = report.ClassifyExploitType(canonicalVuln)
 	out.Exploitability = report.AssessRuntimeExploitability(canonicalVuln, out.ExploitType)
-	out.MissingEvidence = collectMissingEvidence(out.Severity, out.CVSSScore, out.CVSSVector, out.Exploitability, out.KEVStatus, out.EPSSStatus)
+	out.MissingEvidence = collectMissingEvidence(out.Severity, out.CVSSScore, out.CVSSVector, out.Exploitability, out.KEVStatus, out.EPSSStatus, out.AmbiguousGraph)
 
 	return out
 }
@@ -425,11 +431,15 @@ func collectMissingEvidence(
 	assessment report.ExploitabilityAssessment,
 	kevStatus types.EnrichmentStatus,
 	epssStatus types.EnrichmentStatus,
+	ambiguousGraph bool,
 ) []string {
 	var missing []string
 
 	if assessment.Status != report.ExploitabilityConfirmedNotAffected {
 		missing = append(missing, "call-graph reachability", "runtime deployment exposure")
+	}
+	if ambiguousGraph {
+		missing = append(missing, "unambiguous dependency graph edge")
 	}
 	if sev == types.Unknown {
 		missing = append(missing, "upstream severity rating")
