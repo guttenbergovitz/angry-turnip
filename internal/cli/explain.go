@@ -173,6 +173,12 @@ func renderExplanations(out io.Writer, decisions []policy.FindingDecision, evide
 		}
 		fmt.Fprintf(out, "\n")
 		fmt.Fprintf(out, "Sources:             %s\n", sources)
+		if f.KnownExploited {
+			fmt.Fprintf(out, "Known Exploited:     YES (CISA KEV)\n")
+		}
+		if f.EPSSScore > 0 {
+			fmt.Fprintf(out, "EPSS Score:          %.1f%% (percentile: %.1f%%)\n", f.EPSSScore*100, f.EPSSPercentile*100)
+		}
 		fmt.Fprintf(out, "Runtime Exposure:    %s (confidence: %s)\n", f.Exploitability.Status, f.Exploitability.Confidence)
 		if fd.MatchedRule != "" {
 			fmt.Fprintf(out, "Policy Rule:         %s\n", fd.MatchedRule)

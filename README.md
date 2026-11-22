@@ -142,7 +142,7 @@ See [Commands Reference](documentation/user-guide/commands.md) for all options.
 
 ## Environment Variables & API Keys
 
-Vigil works **out of the box without any API keys** using free public endpoints ([OSV.dev](https://osv.dev/) and the public GitHub Security Advisories REST API).
+Vigil works **out of the box without any API keys** using free public endpoints ([OSV.dev](https://osv.dev/), the public GitHub Security Advisories REST API, [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog), and [FIRST EPSS](https://www.first.org/epss/)).
 
 Both optional keys below are **100% free** and only improve enrichment coverage and rate limits:
 
@@ -198,7 +198,7 @@ Full documentation index: [documentation/README.md](documentation/README.md)
 └── test-project/               # Test fixtures
 ```
 
-## CVSS Score Sources
+## CVSS & Threat Intelligence Sources
 
 Vigil enriches CVSS scores from multiple sources in priority order:
 
@@ -206,6 +206,11 @@ Vigil enriches CVSS scores from multiple sources in priority order:
 2. **GitHub Security Advisories** (for `GHSA-*` IDs) — uses GraphQL when `GITHUB_TOKEN` is set, falling back to public REST API
 3. **OSV API** — baseline community-aggregated advisory data
 4. **Derived from known severity** — fallback approximation only when severity is explicitly known (`Unknown` severity retains CVSS `0.0` rather than fabricating a score)
+
+When CVEs are discovered, Vigil also runs a single best-effort, keyless threat-intelligence pass (zero requests on clean scans):
+
+- **CISA KEV** — flags vulnerabilities confirmed as actively exploited in the wild (`known_exploited: true`)
+- **FIRST EPSS** — attaches 30-day exploitation probability and percentile rank (`epss_score`, `epss_percentile`)
 
 Circular dependency graphs are traversed safely without infinite loops via BFS depth tracking and visited-node guards.
 

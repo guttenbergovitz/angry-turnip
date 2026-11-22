@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/guttenbergovitz/vigil-cli/internal/epss"
 	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
@@ -178,5 +179,90 @@ func TestRateLimiterHonoursIntervalAndCancellation(t *testing.T) {
 	cancel()
 	if err := limiter.Wait(ctx); err == nil {
 		t.Error("expected Wait with cancelled context to return error")
+	}
+}
+
+type stubKEVEnricher struct {
+	matches map[string]bool
+	err     error
+	calls   int
+}
+
+func (s *stubKEVEnricher) LookupKEV(_ context.Context, _ []string) (map[string]bool, error) {
+	s.calls++
+	return s.matches, s.err
+}
+
+type stubEPSSEnricher struct {
+	scores map[string]epss.Score
+	err    error
+	calls  int
+}
+
+func (s *stubEPSSEnricher) LookupEPSS(_ context.Context, _ []string) (map[string]epss.Score, error) {
+	s.calls++
+	return s.scores, s.err
+}
+
+func TestEnrichThreatIntelAttachesKEVAndEPSS(t *testing.T) {
+	kevStub := &stubKEVEnricher{
+		matches: map[string]bool{"CVE-2021-44228": true},
+	}
+	epssStub := &stubEPSSEnricher{
+		scores: map[string]epss.Score{
+			"CVE-2021-44228": {EPSS: 0.975, Percentile: 0.999},
+		},
+	}
+
+	scanner := &Scanner{
+		KEVEnricher:  kevStub,
+		EPSSEnricher: epssStub,
+	}
+
+	result := &types.ScanResult{
+		Dependencies: []types.Dependency{
+			{
+				Name:    "log4j-core",
+				Version: "2.14.1",
+				Vulnerabilities: []types.Vulnerability{
+					{
+						ID:      "GHSA-jfh8-c2jp-5v3q",
+						CVEID:   "CVE-2021-44228",
+						Sources: []string{"osv"},
+					},
+				},
+			},
+		},
+	}
+
+	scanner.enrichThreatIntel(context.Background(), result)
+
+	v := result.Dependencies[0].Vulnerabilities[0]
+	if !v.KnownExploited {
+		t.Errorf("expected KnownExploited = true")
+	}
+	if v.EPSSScore != 0.975 || v.EPSSPercentile != 0.999 {
+		t.Errorf("unexpected EPSS values: score=%v pct=%v", v.EPSSScore, v.EPSSPercentile)
+	}
+	if len(v.Sources) != 3 {
+		t.Errorf("expected sources [osv cisa-kev epss], got %v", v.Sources)
+	}
+}
+
+func TestEnrichThreatIntelSkipsNetworkWhenNoCVEs(t *testing.T) {
+	kevStub := &stubKEVEnricher{}
+	epssStub := &stubEPSSEnricher{}
+	scanner := &Scanner{KEVEnricher: kevStub, EPSSEnricher: epssStub}
+
+	result := &types.ScanResult{
+		Dependencies: []types.Dependency{
+			{Name: "express", Version: "4.18.2"},
+		},
+	}
+
+	scanner.enrichThreatIntel(context.Background(), result)
+
+	if kevStub.calls != 0 || epssStub.calls != 0 {
+		t.Errorf("expected 0 threat-intel calls on clean scan, got kev=%d epss=%d", kevStub.calls, epssStub.calls)
 	}
 }

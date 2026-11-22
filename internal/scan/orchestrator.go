@@ -171,6 +171,7 @@ func (s *Scanner) Scan(ctx context.Context, absPath, lockFile string, lockType l
 	}
 
 	result := scanGraph(ctx, absPath, lockFile, lockHash, graph, lockType, skipDevDeps, reporter, scanFn)
+	s.enrichThreatIntel(ctx, result)
 
 	if reporter != nil {
 		reporter.Done(result)
@@ -254,6 +255,100 @@ func (s *Scanner) enrichVulnerability(ctx context.Context, vuln *types.Vulnerabi
 		node.Type == types.Production,
 		node.Depth,
 	)
+}
+
+// enrichThreatIntel performs a single best-effort batch pass over discovered CVE identifiers
+// to attach keyless threat-intelligence signals (CISA KEV and FIRST EPSS). Failures never
+// degrade scan coverage or drop vulnerabilities; zero network calls are made if no CVEs exist.
+func (s *Scanner) enrichThreatIntel(ctx context.Context, result *types.ScanResult) {
+	if result == nil || (s.KEVEnricher == nil && s.EPSSEnricher == nil) {
+		return
+	}
+
+	cveSet := make(map[string]struct{})
+	for i := range result.Dependencies {
+		for j := range result.Dependencies[i].Vulnerabilities {
+			if cveID := canonicalCVEID(&result.Dependencies[i].Vulnerabilities[j]); cveID != "" {
+				cveSet[cveID] = struct{}{}
+			}
+		}
+	}
+	if len(cveSet) == 0 {
+		return
+	}
+
+	cveIDs := make([]string, 0, len(cveSet))
+	for id := range cveSet {
+		cveIDs = append(cveIDs, id)
+	}
+	sort.Strings(cveIDs)
+
+	enrichCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	var kevMatches map[string]bool
+	if s.KEVEnricher != nil {
+		if m, err := s.KEVEnricher.LookupKEV(enrichCtx, cveIDs); err == nil {
+			kevMatches = m
+		}
+	}
+
+	var epssScores map[string]struct {
+		epss float64
+		pct  float64
+	}
+	if s.EPSSEnricher != nil {
+		if scores, err := s.EPSSEnricher.LookupEPSS(enrichCtx, cveIDs); err == nil && len(scores) > 0 {
+			epssScores = make(map[string]struct {
+				epss float64
+				pct  float64
+			}, len(scores))
+			for id, sc := range scores {
+				epssScores[id] = struct {
+					epss float64
+					pct  float64
+				}{epss: sc.EPSS, pct: sc.Percentile}
+			}
+		}
+	}
+
+	for i := range result.Dependencies {
+		for j := range result.Dependencies[i].Vulnerabilities {
+			vuln := &result.Dependencies[i].Vulnerabilities[j]
+			cveID := canonicalCVEID(vuln)
+			if cveID == "" {
+				continue
+			}
+			if kevMatches[cveID] {
+				vuln.KnownExploited = true
+				vuln.Sources = appendUniqueSource(vuln.Sources, "cisa-kev")
+			}
+			if sc, ok := epssScores[cveID]; ok {
+				vuln.EPSSScore = sc.epss
+				vuln.EPSSPercentile = sc.pct
+				vuln.Sources = appendUniqueSource(vuln.Sources, "epss")
+			}
+		}
+	}
+}
+
+func canonicalCVEID(v *types.Vulnerability) string {
+	if cve := strings.ToUpper(strings.TrimSpace(v.CVEID)); strings.HasPrefix(cve, "CVE-") {
+		return cve
+	}
+	if id := strings.ToUpper(strings.TrimSpace(v.ID)); strings.HasPrefix(id, "CVE-") {
+		return id
+	}
+	return ""
+}
+
+func appendUniqueSource(sources []string, source string) []string {
+	for _, existing := range sources {
+		if strings.EqualFold(existing, source) {
+			return sources
+		}
+	}
+	return append(sources, source)
 }
 
 // scanGraph executes concurrent vulnerability scanning over a dependency graph using scanFn.

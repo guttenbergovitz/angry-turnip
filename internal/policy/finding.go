@@ -27,6 +27,9 @@ type Finding struct {
 	Severity          types.Severity                  `json:"severity"`
 	CVSSScore         float64                         `json:"cvss_score"`
 	CVSSVector        string                          `json:"cvss_vector,omitempty"`
+	KnownExploited    bool                            `json:"known_exploited,omitempty"`
+	EPSSScore         float64                         `json:"epss_score,omitempty"`
+	EPSSPercentile    float64                         `json:"epss_percentile,omitempty"`
 	Sources           []string                        `json:"sources,omitempty"`
 	PublishedAt       *time.Time                      `json:"published_at,omitempty"`
 	PackageReleasedAt *time.Time                      `json:"package_released_at,omitempty"`
@@ -106,6 +109,9 @@ func BuildFindings(result *types.ScanResult) []Finding {
 				Severity:          sev,
 				CVSSScore:         vuln.CVSSScore,
 				CVSSVector:        strings.TrimSpace(vuln.CVSSVector),
+				KnownExploited:    vuln.KnownExploited,
+				EPSSScore:         vuln.EPSSScore,
+				EPSSPercentile:    vuln.EPSSPercentile,
 				Sources:           sources,
 				PublishedAt:       vuln.PublishedAt,
 				PackageReleasedAt: dep.ReleasedAt,
@@ -239,6 +245,9 @@ func mergeComponentFindings(group []Finding) Finding {
 	out.Severity = types.Unknown
 	out.CVSSScore = 0
 	out.CVSSVector = ""
+	out.KnownExploited = false
+	out.EPSSScore = 0
+	out.EPSSPercentile = 0
 	out.Direct = false
 	out.DependencyType = types.Development
 
@@ -256,6 +265,15 @@ func mergeComponentFindings(group []Finding) Finding {
 			out.CVSSVector = m.CVSSVector
 		} else if m.CVSSScore == out.CVSSScore && out.CVSSVector == "" && m.CVSSVector != "" {
 			out.CVSSVector = m.CVSSVector
+		}
+		if m.KnownExploited {
+			out.KnownExploited = true
+		}
+		if m.EPSSScore > out.EPSSScore {
+			out.EPSSScore = m.EPSSScore
+			out.EPSSPercentile = m.EPSSPercentile
+		} else if m.EPSSScore == out.EPSSScore && m.EPSSPercentile > out.EPSSPercentile {
+			out.EPSSPercentile = m.EPSSPercentile
 		}
 		if m.PublishedAt != nil && (publishedAt == nil || m.PublishedAt.Before(*publishedAt)) {
 			t := *m.PublishedAt

@@ -466,7 +466,7 @@ vigil version 0.1.0
 
 ### Environment Variables
 
-Vigil works without any API keys using free public sources (OSV.dev and unauthenticated GitHub Advisory REST). All optional keys below are **free**:
+Vigil works without any API keys using free public sources (OSV.dev, unauthenticated GitHub Advisory REST, CISA KEV, and FIRST EPSS). All optional keys below are **free**:
 
 - `NVD_API_KEY` (**Free** — request at [nvd.nist.gov/developers/request-an-api-key](https://nvd.nist.gov/developers/request-an-api-key)): enables authoritative NVD CVE enrichment (50 requests / 30s, globally rate-limited). When unset, NVD queries are skipped.
 - `GITHUB_TOKEN` (**Free** — create a Personal Access Token at [github.com/settings/tokens](https://github.com/settings/tokens); no scopes required for public advisories, read-only `repo` scope only when scanning private GitHub repositories): switches GHSA enrichment from public REST (60 requests/hour) to GraphQL (5,000 requests/hour).

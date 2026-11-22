@@ -6,7 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/guttenbergovitz/vigil-cli/internal/epss"
 	"github.com/guttenbergovitz/vigil-cli/internal/github"
+	"github.com/guttenbergovitz/vigil-cli/internal/kev"
 	"github.com/guttenbergovitz/vigil-cli/internal/npm"
 	"github.com/guttenbergovitz/vigil-cli/internal/nvd"
 	"github.com/guttenbergovitz/vigil-cli/internal/osv"
@@ -26,6 +28,16 @@ type CVEEnricher interface {
 // GHSAEnricher fetches GitHub Security Advisory metadata by GHSA identifier.
 type GHSAEnricher interface {
 	QueryGHSA(ghsaID string) (*types.Vulnerability, error)
+}
+
+// KEVEnricher checks whether CVE identifiers appear in the CISA KEV catalogue.
+type KEVEnricher interface {
+	LookupKEV(ctx context.Context, cveIDs []string) (map[string]bool, error)
+}
+
+// EPSSEnricher retrieves FIRST EPSS exploitation probabilities for CVE identifiers.
+type EPSSEnricher interface {
+	LookupEPSS(ctx context.Context, cveIDs []string) (map[string]epss.Score, error)
 }
 
 // ReleaseDateFetcher fetches package release timestamps for informational metadata.
@@ -81,6 +93,8 @@ type Scanner struct {
 	VulnSource   VulnerabilitySource
 	CVEEnricher  CVEEnricher
 	GHSAEnricher GHSAEnricher
+	KEVEnricher  KEVEnricher
+	EPSSEnricher EPSSEnricher
 	ReleaseDates ReleaseDateFetcher
 	NVDLimiter   *RateLimiter
 	NVDEnabled   bool
@@ -103,6 +117,8 @@ func DefaultScanner() *Scanner {
 		VulnSource:   osv.New("https://api.osv.dev/v1/query", 10),
 		CVEEnricher:  nvdClient,
 		GHSAEnricher: github.New(githubToken, 10),
+		KEVEnricher:  kev.New(kev.DefaultEndpoint, 10),
+		EPSSEnricher: epss.New(epss.DefaultEndpoint, 10),
 		ReleaseDates: npm.New("https://registry.npmjs.org", 10),
 		NVDLimiter:   nvdLimiter,
 		NVDEnabled:   nvdAPIKey != "",

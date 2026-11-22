@@ -67,6 +67,9 @@ type Vulnerability struct {
 	CVETitle       string     // Title from NVD/MITRE
 	CVEDescription string     // Full description from NVD/MITRE
 	CVESeverity    Severity   // Severity from MITRE/NVD
+	KnownExploited bool       // True if listed in the CISA Known Exploited Vulnerabilities (KEV) catalogue
+	EPSSScore      float64    // FIRST EPSS 30-day exploitation probability (0.0-1.0)
+	EPSSPercentile float64    // FIRST EPSS percentile rank across all scored CVEs (0.0-1.0)
 }
 
 // Severity represents a vulnerability severity level.
