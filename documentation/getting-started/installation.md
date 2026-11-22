@@ -33,7 +33,7 @@ Verify installation:
 atnp version
 ```
 
-## Option 2: Build from Source
+## Option 3: Build from Source
 
 Install task runner (if not installed):
 
@@ -76,7 +76,7 @@ sudo mv atnp /usr/local/bin/
 ./atnp scan .
 ```
 
-## Option 3: Docker Container
+## Option 4: Docker Container
 
 Run without installing Go or language runtimes:
 
@@ -112,7 +112,7 @@ docker run --rm -v "$(pwd):/scan" angry-turnip:latest scan .
 - `NVD_API_KEY` - Improves NVD rate limits (5/30s → 50/30s)
 - `GITHUB_TOKEN` - For private repos and GHSA rate limits
 
-## Option 4: Nix Flake
+## Option 5: Nix Flake
 
 For Nix users:
 
@@ -132,7 +132,7 @@ nix develop
 
 Nix provides reproducible, declarative builds with zero configuration.
 
-## Option 5: Development Build
+## Option 6: Development Build
 
 For contributing or testing unreleased features:
 

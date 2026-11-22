@@ -68,20 +68,20 @@ brew install guttenbergovitz/tap/atnp
 go install github.com/guttenbergovitz/angry-turnip/cmd/atnp@latest
 ```
 
-### Option 2: Docker
+### Option 3: Docker
 
 ```bash
 docker pull guttenbergovitz/angry-turnip:latest
 docker run --rm -v "$(pwd):/scan" guttenbergovitz/angry-turnip:latest scan .
 ```
 
-### Option 3: Nix
+### Option 4: Nix
 
 ```bash
 nix run github:guttenbergovitz/angry-turnip -- scan .
 ```
 
-### Option 4: Build from Source
+### Option 5: Build from Source
 
 ```bash
 # Install task runner (if not installed)
