@@ -11,13 +11,21 @@ import (
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
 
-// Baseline stores a verified snapshot of known finding keys for delta analysis.
+// ScanScope records the coverage boundaries under which a Baseline snapshot was captured.
+type ScanScope struct {
+	TotalPackages   int `json:"total_packages"`
+	ScannedPackages int `json:"scanned_packages"`
+	SkippedPackages int `json:"skipped_packages"`
+}
+
+// Baseline stores a verified snapshot of known finding keys and scan scope for delta analysis.
 // A baseline records what was previously observed; it does not constitute formal risk acceptance.
 type Baseline struct {
 	Version      int       `json:"version"`
 	GeneratedAt  time.Time `json:"generated_at"`
 	LockFile     string    `json:"lock_file"`
 	LockFileHash string    `json:"lock_file_hash"`
+	Scope        ScanScope `json:"scope"`
 	FindingKeys  []string  `json:"finding_keys"`
 }
 
@@ -31,22 +39,23 @@ type DeltaReport struct {
 	NotObserved []string  `json:"not_observed"`
 }
 
-// ValidateForBaseline verifies that a ScanResult has complete scan coverage and is safe
-// to persist as a baseline snapshot.
+// ValidateForBaseline verifies that a ScanResult has valid, complete scan coverage and is
+// safe to persist as a baseline snapshot.
 func ValidateForBaseline(result *types.ScanResult) error {
-	if result == nil {
-		return fmt.Errorf("cannot build baseline from nil scan result")
-	}
-	if result.Coverage.FailedPackages > 0 {
-		return fmt.Errorf("cannot build baseline from incomplete scan: %d package(s) failed vulnerability lookup", result.Coverage.FailedPackages)
-	}
-	if result.Coverage.UnsupportedPackages > 0 {
-		return fmt.Errorf("cannot build baseline from incomplete scan: %d package(s) have unresolved or unsupported metadata", result.Coverage.UnsupportedPackages)
+	state, notes := ValidateEvidence(result)
+	switch state {
+	case EvidenceInvalid:
+		return fmt.Errorf("cannot build baseline from invalid scan result: %s", strings.Join(notes, "; "))
+	case EvidenceUnverified:
+		return fmt.Errorf("cannot build baseline from unverified scan result: %s", strings.Join(notes, "; "))
+	case EvidencePartial:
+		return fmt.Errorf("cannot build baseline from incomplete scan: %s", strings.Join(notes, "; "))
 	}
 	return nil
 }
 
-// BuildBaseline constructs a deterministic Baseline snapshot from a ScanResult.
+// BuildBaseline constructs a deterministic Baseline snapshot from a ScanResult, recording
+// the exact scan scope alongside finding keys.
 func BuildBaseline(result *types.ScanResult) *Baseline {
 	findings := BuildFindings(result)
 	seen := make(map[string]bool, len(findings))
@@ -65,7 +74,12 @@ func BuildBaseline(result *types.ScanResult) *Baseline {
 		GeneratedAt:  time.Now().UTC(),
 		LockFile:     result.LockFile,
 		LockFileHash: result.LockFileHash,
-		FindingKeys:  keys,
+		Scope: ScanScope{
+			TotalPackages:   result.Coverage.TotalPackages,
+			ScannedPackages: result.Coverage.ScannedPackages,
+			SkippedPackages: result.Coverage.SkippedPackages,
+		},
+		FindingKeys: keys,
 	}
 }
 
@@ -101,7 +115,6 @@ func ScannedPURLSet(result *types.ScanResult) map[string]bool {
 		return set
 	}
 	for _, dep := range result.Dependencies {
-		// Treat explicitly StatusScanned (or legacy results where ScanStatus is empty and FailedPackages==0) as scanned.
 		if dep.ScanStatus == types.StatusScanned || (dep.ScanStatus == "" && result.Coverage.FailedPackages == 0 && result.Coverage.UnsupportedPackages == 0) {
 			set[BuildPURL(dep.Ecosystem, dep.Name, dep.Version)] = true
 		}

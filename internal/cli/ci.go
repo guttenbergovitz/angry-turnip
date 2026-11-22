@@ -43,27 +43,33 @@ type CIGateOutcome struct {
 func EvaluateCIGate(result *types.ScanResult, opts CIGateOptions) CIGateOutcome {
 	pol := policy.PolicyFromThresholds(opts.MinSeverity, opts.FailOnCVSS, opts.FailOnScanError, opts.FailOnUnsupported)
 	eval := policy.Evaluate(result, pol, nil, time.Now().UTC())
+	return outcomeFromEvaluation(eval, result, opts)
+}
 
+func outcomeFromEvaluation(eval policy.EvaluationResult, result *types.ScanResult, opts CIGateOptions) CIGateOutcome {
 	outcome := CIGateOutcome{
 		Evaluation:          eval,
 		FailedPackages:      eval.FailedPackages,
 		UnsupportedPackages: eval.UnsupportedPackages,
 	}
 
-	for _, dep := range result.Dependencies {
-		for _, vuln := range dep.Vulnerabilities {
-			if vuln.Severity.HigherOrEqualThan(opts.MinSeverity) {
-				outcome.SeverityViolations++
-			}
-			if opts.FailOnCVSS > 0.0 && vuln.CVSSScore >= opts.FailOnCVSS {
-				outcome.CVSSViolations++
+	if result != nil {
+		for _, dep := range result.Dependencies {
+			for _, vuln := range dep.Vulnerabilities {
+				if vuln.Severity.HigherOrEqualThan(opts.MinSeverity) {
+					outcome.SeverityViolations++
+				}
+				if opts.FailOnCVSS > 0.0 && vuln.CVSSScore >= opts.FailOnCVSS {
+					outcome.CVSSViolations++
+				}
 			}
 		}
 	}
 
-	if eval.ScanIncomplete || eval.EvidenceState == policy.EvidenceInvalid {
+	if eval.ScanIncomplete || eval.EvidenceState == policy.EvidenceInvalid || eval.EvidenceState == policy.EvidenceUnverified {
 		outcome.ExitCode = 2
-		outcome.Reason = fmt.Sprintf("incomplete scan: %d failed, %d unsupported package(s)", eval.FailedPackages, eval.UnsupportedPackages)
+		outcome.Reason = fmt.Sprintf("incomplete or unverified evidence (%s): %d failed, %d unsupported package(s)",
+			eval.EvidenceState, eval.FailedPackages, eval.UnsupportedPackages)
 		return outcome
 	}
 
@@ -202,6 +208,7 @@ func CI(args []string) error {
 		}
 	}
 
+	// Single policy evaluation pass shared by both output rendering and exit code selection.
 	eval := policy.Evaluate(result, pol, baseline, time.Now().UTC())
 
 	if *policyPath != "" {
@@ -209,7 +216,7 @@ func CI(args []string) error {
 			return err
 		}
 	} else {
-		outcome := EvaluateCIGate(result, CIGateOptions{
+		outcome := outcomeFromEvaluation(eval, result, CIGateOptions{
 			MinSeverity:       minSev,
 			FailOnCVSS:        *failOnCVSS,
 			FailOnScanError:   *failOnScanError,
@@ -220,7 +227,7 @@ func CI(args []string) error {
 		}
 	}
 
-	if eval.ScanIncomplete || eval.EvidenceState == policy.EvidenceInvalid {
+	if eval.ScanIncomplete || eval.EvidenceState == policy.EvidenceInvalid || eval.EvidenceState == policy.EvidenceUnverified {
 		return &ExitError{Code: 2}
 	}
 	if eval.OverallDecision == policy.DecisionBlock || eval.OverallDecision == policy.DecisionReview {

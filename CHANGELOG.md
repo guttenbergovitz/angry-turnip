@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.2] - 2026-11-22
+
+### Fixed
+
+- **Enforced `ScanCoverage` invariants and blocked `EvidenceUnverified`**
+  - `policy.ValidateEvidence` now validates coverage counter consistency (`scanned + failed + skipped + unsupported == total`, non-negative counts, and consistency with `Dependencies`), returning `EvidenceInvalid` on mismatches.
+  - `policy.Evaluate` and `vigil ci` now block (`DecisionBlock`, exit code `2`) when `EvidenceState` is `UNVERIFIED` or `INVALID`, ensuring empty or corrupted scans never pass as `ALLOW`.
+  - Separated intentional scope exclusions (`ScopeExclusions` / `SkippedPackages`, e.g. `--skip-devdeps`) from coverage failures (`FailedPackages`, `UnsupportedPackages`).
+- **Required explicit scope on policy exceptions**
+  - `policy.ParsePolicy` now requires every exception to declare either `package` + (`version` or `all_versions: true`) or explicit `global: true`, preventing accidental wildcard suppressions.
+  - Added `strict_exceptions: true` policy option requiring `approval_id` on every exception.
+- **Recorded scan scope in baseline snapshots**
+  - Added `ScanScope` (`total_packages`, `scanned_packages`, `skipped_packages`) to `policy.Baseline` and routed `ValidateForBaseline` through `ValidateEvidence`.
+- **Deduplicated overlapping advisory findings**
+  - Updated `policy.BuildFindings` to merge duplicate vulnerability records for the same component PURL that share any advisory identifier or alias (`GHSA-*` / `CVE-*`), preserving the `CVE-*` primary ID, highest severity/CVSS, and union of sources.
+- **Eliminated duplicate CI evaluation pass**
+  - Updated `cli.CI` to execute `policy.Evaluate` exactly once and share the resulting `EvaluationResult` across output rendering and exit code determination.
+
 ## [2.2.1] - 2026-11-22
 
 ### Fixed
@@ -346,7 +364,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release gate recommendations
 - CI/CD integration with configurable failure thresholds
 
-[Unreleased]: https://github.com/guttenbergovitz/vigil-cli/compare/v2.2.1...HEAD
+[Unreleased]: https://github.com/guttenbergovitz/vigil-cli/compare/v2.2.2...HEAD
+[2.2.2]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.2.2
 [2.2.1]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.2.1
 [2.2.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.2.0
 [2.1.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.1.0

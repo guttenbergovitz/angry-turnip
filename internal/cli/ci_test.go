@@ -11,9 +11,13 @@ import (
 func TestEvaluateCIGateFailOnScanErrorAndUnsupported(t *testing.T) {
 	failedResult := &types.ScanResult{
 		Coverage: types.ScanCoverage{
-			TotalPackages:   5,
-			ScannedPackages: 4,
+			TotalPackages:   2,
+			ScannedPackages: 1,
 			FailedPackages:  1,
+		},
+		Dependencies: []types.Dependency{
+			{Name: "a", Version: "1.0.0", ScanStatus: types.StatusScanned},
+			{Name: "b", Version: "1.0.0", ScanStatus: types.StatusFailed},
 		},
 	}
 
@@ -32,9 +36,13 @@ func TestEvaluateCIGateFailOnScanErrorAndUnsupported(t *testing.T) {
 	// UnsupportedPackages > 0 must also fail by default.
 	unsupportedResult := &types.ScanResult{
 		Coverage: types.ScanCoverage{
-			TotalPackages:       3,
-			ScannedPackages:     2,
+			TotalPackages:       2,
+			ScannedPackages:     1,
 			UnsupportedPackages: 1,
+		},
+		Dependencies: []types.Dependency{
+			{Name: "a", Version: "1.0.0", ScanStatus: types.StatusScanned},
+			{Name: "b", Version: "", ScanStatus: types.StatusUnsupported},
 		},
 	}
 	unsupportedOutcome := EvaluateCIGate(unsupportedResult, CIGateOptions{
@@ -44,6 +52,16 @@ func TestEvaluateCIGateFailOnScanErrorAndUnsupported(t *testing.T) {
 	})
 	if unsupportedOutcome.ExitCode != 2 {
 		t.Errorf("ExitCode = %d, want 2 when FailOnUnsupported=true and UnsupportedPackages=1", unsupportedOutcome.ExitCode)
+	}
+
+	// Unverified empty scan must return exit code 2 (never silently pass).
+	unverifiedOutcome := EvaluateCIGate(&types.ScanResult{}, CIGateOptions{
+		MinSeverity:       types.High,
+		FailOnScanError:   true,
+		FailOnUnsupported: true,
+	})
+	if unverifiedOutcome.ExitCode != 2 {
+		t.Errorf("ExitCode = %d, want 2 for UNVERIFIED scan", unverifiedOutcome.ExitCode)
 	}
 
 	// Explicit opt-out allows gate to pass if no threshold violations occurred.

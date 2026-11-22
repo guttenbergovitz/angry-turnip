@@ -45,12 +45,14 @@ type Rule struct {
 }
 
 // Exception defines a scoped, owned, time-bounded risk acceptance for a specific vulnerability.
-// Exceptions represent formally accepted risk rather than proof of safety, and never override
-// incomplete scan coverage or scan errors.
+// Every exception must explicitly declare its scope: either Package + (Version or AllVersions: true),
+// or Global: true. Omitting scope fields is rejected so wildcard exceptions can never occur by accident.
 type Exception struct {
 	ID          string         `yaml:"id" json:"id"`
 	Package     string         `yaml:"package,omitempty" json:"package,omitempty"`
 	Version     string         `yaml:"version,omitempty" json:"version,omitempty"`
+	AllVersions bool           `yaml:"all_versions,omitempty" json:"all_versions,omitempty"`
+	Global      bool           `yaml:"global,omitempty" json:"global,omitempty"`
 	Ecosystem   string         `yaml:"ecosystem,omitempty" json:"ecosystem,omitempty"`
 	MaxSeverity types.Severity `yaml:"max_severity,omitempty" json:"max_severity,omitempty"`
 	ApprovalID  string         `yaml:"approval_id,omitempty" json:"approval_id,omitempty"`
@@ -62,6 +64,7 @@ type Exception struct {
 // Policy defines declarative security gate rules and scoped exceptions.
 type Policy struct {
 	Version           int         `yaml:"version" json:"version"`
+	StrictExceptions  bool        `yaml:"strict_exceptions,omitempty" json:"strict_exceptions,omitempty"`
 	FailOnScanError   *bool       `yaml:"fail_on_scan_error,omitempty" json:"fail_on_scan_error,omitempty"`
 	FailOnUnsupported *bool       `yaml:"fail_on_unsupported,omitempty" json:"fail_on_unsupported,omitempty"`
 	Rules             []Rule      `yaml:"rules" json:"rules"`
@@ -85,6 +88,7 @@ type EvaluationResult struct {
 	OverallDecision     Decision          `json:"overall_decision"`
 	EvidenceState       EvidenceState     `json:"evidence_state"`
 	EvidenceNotes       []string          `json:"evidence_notes,omitempty"`
+	ScopeExclusions     int               `json:"scope_exclusions,omitempty"`
 	PolicyVersion       int               `json:"policy_version"`
 	Decisions           []FindingDecision `json:"decisions"`
 	BlockCount          int               `json:"block_count"`
@@ -169,7 +173,7 @@ func LoadPolicy(path string) (Policy, error) {
 }
 
 // ParsePolicy strictly decodes and validates YAML policy bytes, rejecting unknown fields,
-// unsupported schema versions, empty rule sets, out-of-range CVSS scores, and invalid exceptions.
+// unsupported schema versions, empty rule sets, out-of-range CVSS scores, and unscoped exceptions.
 func ParsePolicy(data []byte) (Policy, error) {
 	var pol Policy
 	dec := yaml.NewDecoder(bytes.NewReader(data))
@@ -233,6 +237,18 @@ func ParsePolicy(data []byte) (Policy, error) {
 		if strings.TrimSpace(ex.Reason) == "" {
 			return Policy{}, fmt.Errorf("exception %q is missing required field 'reason'", ex.ID)
 		}
+		if pol.StrictExceptions && strings.TrimSpace(ex.ApprovalID) == "" {
+			return Policy{}, fmt.Errorf("exception %q is missing required 'approval_id' (strict_exceptions is enabled)", ex.ID)
+		}
+		// Require explicit scope: either global: true OR package + (version or all_versions: true).
+		if !ex.Global {
+			if strings.TrimSpace(ex.Package) == "" {
+				return Policy{}, fmt.Errorf("exception %q must specify 'package' (or explicitly set 'global: true')", ex.ID)
+			}
+			if strings.TrimSpace(ex.Version) == "" && !ex.AllVersions {
+				return Policy{}, fmt.Errorf("exception %q for package %q must specify 'version' (or explicitly set 'all_versions: true')", ex.ID, ex.Package)
+			}
+		}
 		if ex.MaxSeverity != "" {
 			sev, ok := types.ParseSeverity(string(ex.MaxSeverity))
 			if !ok || sev == types.Unknown {
@@ -248,34 +264,50 @@ func ParsePolicy(data []byte) (Policy, error) {
 	return pol, nil
 }
 
-// ValidateEvidence inspects scan coverage and returns an independent EvidenceState.
+// ValidateEvidence inspects scan coverage invariants and returns an independent EvidenceState.
+// Intentional scope exclusions (SkippedPackages) are reported separately from coverage failures
+// (FailedPackages and UnsupportedPackages).
 func ValidateEvidence(result *types.ScanResult) (EvidenceState, []string) {
 	if result == nil {
 		return EvidenceInvalid, []string{"Scan result is missing."}
 	}
 
+	c := result.Coverage
+	if c.TotalPackages < 0 || c.ScannedPackages < 0 || c.FailedPackages < 0 || c.SkippedPackages < 0 || c.UnsupportedPackages < 0 {
+		return EvidenceInvalid, []string{"Scan coverage contains negative counters."}
+	}
+
+	sum := c.ScannedPackages + c.FailedPackages + c.SkippedPackages + c.UnsupportedPackages
+	if c.TotalPackages > 0 && sum != c.TotalPackages {
+		return EvidenceInvalid, []string{fmt.Sprintf("Inconsistent scan coverage counters: scanned(%d)+failed(%d)+skipped(%d)+unsupported(%d) != total(%d).",
+			c.ScannedPackages, c.FailedPackages, c.SkippedPackages, c.UnsupportedPackages, c.TotalPackages)}
+	}
+	if c.TotalPackages == 0 && sum > 0 {
+		return EvidenceInvalid, []string{"Inconsistent scan coverage: total_packages is 0 while status counters are non-zero."}
+	}
+	if c.ScannedPackages > 0 && len(result.Dependencies) == 0 {
+		return EvidenceInvalid, []string{"Inconsistent scan evidence: coverage reports scanned packages but dependency list is empty."}
+	}
+	if c.TotalPackages == 0 && len(result.Dependencies) == 0 {
+		return EvidenceUnverified, []string{"No dependencies were evaluated in this scan."}
+	}
+
 	var notes []string
-	if result.Coverage.FailedPackages > 0 {
-		notes = append(notes, fmt.Sprintf("%d package(s) failed vulnerability lookup.", result.Coverage.FailedPackages))
+	if c.FailedPackages > 0 {
+		notes = append(notes, fmt.Sprintf("%d package(s) failed vulnerability lookup.", c.FailedPackages))
 	}
-	if result.Coverage.UnsupportedPackages > 0 {
-		notes = append(notes, fmt.Sprintf("%d package(s) could not be resolved or are unsupported.", result.Coverage.UnsupportedPackages))
+	if c.UnsupportedPackages > 0 {
+		notes = append(notes, fmt.Sprintf("%d package(s) could not be resolved or are unsupported.", c.UnsupportedPackages))
 	}
-	if result.Coverage.SkippedPackages > 0 {
-		notes = append(notes, fmt.Sprintf("%d package(s) were skipped during scanning.", result.Coverage.SkippedPackages))
-	}
-
-	if result.Coverage.FailedPackages > 0 || result.Coverage.UnsupportedPackages > 0 {
-		return EvidencePartial, notes
-	}
-	if result.Coverage.SkippedPackages > 0 {
-		return EvidencePartial, notes
-	}
-	if result.Coverage.TotalPackages == 0 && len(result.Dependencies) == 0 {
-		return EvidenceUnverified, []string{"No dependencies were recorded in scan coverage."}
+	if c.SkippedPackages > 0 {
+		notes = append(notes, fmt.Sprintf("%d package(s) were intentionally excluded from scope (for example via --skip-devdeps).", c.SkippedPackages))
 	}
 
-	return EvidenceComplete, nil
+	if c.FailedPackages > 0 || c.UnsupportedPackages > 0 {
+		return EvidencePartial, notes
+	}
+
+	return EvidenceComplete, notes
 }
 
 // Evaluate deterministically evaluates a ScanResult against a Policy and optional Baseline.
@@ -300,6 +332,7 @@ func Evaluate(result *types.ScanResult, pol Policy, baseline *Baseline, now time
 	if result != nil {
 		eval.FailedPackages = result.Coverage.FailedPackages
 		eval.UnsupportedPackages = result.Coverage.UnsupportedPackages
+		eval.ScopeExclusions = result.Coverage.SkippedPackages
 	}
 
 	failOnScanError := true
@@ -339,8 +372,8 @@ func Evaluate(result *types.ScanResult, pol Policy, baseline *Baseline, now time
 		eval.OverallDecision = higherDecision(eval.OverallDecision, fd.Decision)
 	}
 
-	// Incomplete evidence always overrides finding-level ALLOW / exceptions when enforcement is enabled.
-	if eval.ScanIncomplete || eval.EvidenceState == EvidenceInvalid {
+	// Incomplete, unverified, or invalid evidence always overrides finding-level ALLOW / exceptions.
+	if eval.ScanIncomplete || eval.EvidenceState == EvidenceInvalid || eval.EvidenceState == EvidenceUnverified {
 		eval.OverallDecision = DecisionBlock
 	}
 
@@ -367,7 +400,6 @@ func evaluateFinding(f Finding, pol Policy, hasBaseline, isNew bool, now time.Ti
 	fd.Reasoning = append(fd.Reasoning, fmt.Sprintf("Runtime exploitability is %s (confidence: %s): %s",
 		f.Exploitability.Status, f.Exploitability.Confidence, f.Exploitability.Rationale))
 
-	// Evaluate policy rules first so we know what the underlying decision would be.
 	for _, rule := range pol.Rules {
 		if !ruleMatches(rule, f, isNew) {
 			continue
@@ -383,7 +415,6 @@ func evaluateFinding(f Finding, pol Policy, hasBaseline, isNew bool, now time.Ti
 		}
 	}
 
-	// Check scoped exceptions (formal risk acceptance).
 	for i := range pol.Exceptions {
 		ex := pol.Exceptions[i]
 		if !exceptionMatchesScope(ex, f) {
@@ -444,11 +475,13 @@ func exceptionMatchesScope(ex Exception, f Finding) bool {
 	if !f.MatchesID(ex.ID) {
 		return false
 	}
-	if ex.Package != "" && !strings.EqualFold(ex.Package, f.Package) {
-		return false
-	}
-	if ex.Version != "" && ex.Version != f.Version {
-		return false
+	if !ex.Global {
+		if !strings.EqualFold(ex.Package, f.Package) {
+			return false
+		}
+		if !ex.AllVersions && ex.Version != f.Version {
+			return false
+		}
 	}
 	if ex.Ecosystem != "" && !strings.EqualFold(ex.Ecosystem, string(f.Ecosystem)) {
 		return false
