@@ -193,6 +193,8 @@ func renderExplanations(out io.Writer, decisions []policy.FindingDecision, evide
 			fmt.Fprintf(out, "Known Exploited:     NO (checked CISA KEV)\n")
 		case types.EnrichmentFailed:
 			fmt.Fprintf(out, "Known Exploited:     UNAVAILABLE (CISA KEV lookup failed)\n")
+		case types.EnrichmentNotRequested:
+			fmt.Fprintf(out, "Known Exploited:     NOT REQUESTED (CISA KEV was not queried)\n")
 		default:
 			if f.KnownExploited {
 				fmt.Fprintf(out, "Known Exploited:     YES (CISA KEV)\n")
@@ -200,11 +202,17 @@ func renderExplanations(out io.Writer, decisions []policy.FindingDecision, evide
 		}
 		switch f.EPSSStatus {
 		case types.EnrichmentAvailable:
-			fmt.Fprintf(out, "EPSS Score:          %.1f%% (percentile: %.1f%%)\n", f.EPSSScore*100, f.EPSSPercentile*100)
+			if f.EPSSDate != "" {
+				fmt.Fprintf(out, "EPSS Score:          %.1f%% (percentile: %.1f%%, model date: %s)\n", f.EPSSScore*100, f.EPSSPercentile*100, f.EPSSDate)
+			} else {
+				fmt.Fprintf(out, "EPSS Score:          %.1f%% (percentile: %.1f%%)\n", f.EPSSScore*100, f.EPSSPercentile*100)
+			}
 		case types.EnrichmentNotFound:
 			fmt.Fprintf(out, "EPSS Score:          NOT SCORED (checked FIRST EPSS)\n")
 		case types.EnrichmentFailed:
 			fmt.Fprintf(out, "EPSS Score:          UNAVAILABLE (FIRST EPSS lookup failed)\n")
+		case types.EnrichmentNotRequested:
+			fmt.Fprintf(out, "EPSS Score:          NOT REQUESTED (FIRST EPSS was not queried)\n")
 		default:
 			if f.EPSSScore > 0 {
 				fmt.Fprintf(out, "EPSS Score:          %.1f%% (percentile: %.1f%%)\n", f.EPSSScore*100, f.EPSSPercentile*100)

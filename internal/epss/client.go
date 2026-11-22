@@ -21,10 +21,11 @@ const (
 	maxResponseBytes = 4 << 20 // 4 MiB upper bound per batch response
 )
 
-// Score holds the FIRST EPSS exploitation probability and percentile rank for a CVE.
+// Score holds the FIRST EPSS exploitation probability, percentile rank, and model date for a CVE.
 type Score struct {
 	EPSS       float64
 	Percentile float64
+	Date       string // YYYY-MM-DD model publication date reported by FIRST EPSS
 }
 
 // Client queries the public FIRST EPSS API for CVE exploitation probabilities.
@@ -52,6 +53,7 @@ type epssResponse struct {
 		CVE        string `json:"cve"`
 		EPSS       string `json:"epss"`
 		Percentile string `json:"percentile"`
+		Date       string `json:"date"`
 	} `json:"data"`
 }
 
@@ -124,6 +126,7 @@ func (c *Client) fetchBatch(ctx context.Context, batch []string, out map[string]
 		out[id] = Score{
 			EPSS:       prob,
 			Percentile: pct,
+			Date:       strings.TrimSpace(entry.Date),
 		}
 	}
 	return nil

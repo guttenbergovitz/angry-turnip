@@ -14,7 +14,9 @@ Each subdirectory contains:
 
 ## Running Offline Ground-Truth Verification
 
-Runs without network access as part of standard Go testing:
+Runs without network access as part of standard Go testing. Includes two independent suites:
+1. `TestReferenceFixturesResolutionAndCoverage`: verifies 100% PURL precision/recall, `direct`/`type` classification, `ScanStatus`, and `EvidenceState` across all six ecosystems.
+2. `TestReferenceAdvisoryMatchingFromFrozenOSVSnapshot`: verifies `osv.Client` response parsing, Maven PURL construction, `aliases[]`, `severity[]` CVSS vectors, and `database_specific.severity` against a frozen OSV API payload independently of `expected.json`.
 
 ```bash
 go test -v ./benchmarks/reference/...
@@ -22,7 +24,7 @@ go test -v ./benchmarks/reference/...
 
 ## Running Live Scanner Comparison (Vigil vs OSV-Scanner, Trivy, Grype)
 
-Requires network access and any combination of `osv-scanner`, `trivy`, or `grype` installed on `PATH` (all keyless):
+Uses `benchmarks/reference/cmd/compare` to normalize each scanner's output to canonical `(advisoryID, PURL)` pairs, separate execution status (`OK` / `FAILED` / `N/A`) from finding counts, and compute recall against `expected.json`:
 
 ```bash
 bash benchmarks/reference/compare.sh

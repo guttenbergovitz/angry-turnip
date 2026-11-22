@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-11-22
+
+### Added
+
+- **Normalized Benchmark Runner & Frozen OSV Snapshot Testing (`benchmarks/reference/`)**
+  - Added `benchmarks/reference/cmd/compare` normalizing Vigil, OSV-Scanner, Trivy, and Grype outputs to canonical `(advisoryID, PURL)` pairs, tracking execution status (`OK`, `FAILED`, `N/A`) independently of finding counts, and computing recall against `expected.json`.
+  - Added `TestReferenceAdvisoryMatchingFromFrozenOSVSnapshot` testing `osv.Client` parsing, Maven PURL formatting, `aliases[]`, `severity[]` CVSS vectors, and `database_specific.severity` against a frozen OSV API response independently of `expected.json`.
+- **EPSS Model Date Provenance**
+  - Recorded FIRST EPSS upstream `date` (`epss_date` on `Finding` / `Vulnerability` and `model_date` on `SourceEnrichmentStatus`) separately from `fetched_at`, and surfaced it in `vigil explain`.
+
+### Fixed
+
+- **Prevented Silent `ALLOW` on Unverified Threat Intelligence & Incompatible Baselines**
+  - When a policy rule relies on CISA KEV or FIRST EPSS and the lookup status for a `CVE-*` finding is `failed` or `not_requested`, `policy.Evaluate` now defaults to `DecisionReview` (unless `on_threat_intel_unavailable` is explicitly set to `ALLOW` or `BLOCK`), never treating missing or unrequested queries as negative proof.
+  - When `CompareBaselineScope` detects an incompatible scan configuration (`ConfigFingerprint` mismatch), `policy.Evaluate` rejects the baseline for delta classification (evaluating all findings as new so `new_only` rules cannot be bypassed) and escalates `OverallDecision` to at least `DecisionReview`.
+- **OSV Client Maven PURL & Schema Parsing (`internal/osv`)**
+  - Fixed Maven PURL construction in `osv.Client.QueryWithEcosystemContext` (`pkg:maven/groupId/artifactId@version`), added `aliases[]` CVE extraction, `severity[]` CVSS vector extraction, and `database_specific.severity` fallback.
+- **TUI Lifecycle, Canonical Findings, Secret Masking & Scoped Local Hide (`internal/ui`, `internal/cli`)**
+  - Executed Secrets, IaC, Licenses (`license.AnalyzeResultLicenses`), and canonical `policy.Evaluate` inside the scan workflow before sending `ui.DoneMsg`, ensuring all TUI tabs and policy decisions are populated before entering explorer mode.
+  - Built the TUI Vulnerabilities view from canonical `policy.EvaluationResult` decisions (displaying `Decision`, `EvidenceState`, `Coverage`, and `KEV`/`EPSS` status in the header).
+  - Masked secret values by default (`secrets.MaskSecret`) in both CLI `--secrets` output and the TUI Secrets tab, with explicit `[s]` toggle to reveal/mask in TUI.
+  - Replaced global `Mark Fixed` with scoped `Hide locally` keyed by canonical `Finding.Key` (`ID|PURL`), added `[v]` to view/unhide hidden items and `[X]` to restore all, protected group headers (`IsGroupHeader`) from hide/copy actions, included `unknown` in severity grouping, sorted package groups deterministically, ran file exports asynchronously via `tea.Cmd`, removed redundant `ticker()` spawns, added `cancelFunc` invocation on `Ctrl+C`, and switched table cell truncation to UTF-8 rune boundaries.
+
 ## [2.4.0] - 2026-11-22
 
 ### Added

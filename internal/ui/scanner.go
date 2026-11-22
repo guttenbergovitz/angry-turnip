@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/guttenbergovitz/vigil-cli/internal/container"
 	"github.com/guttenbergovitz/vigil-cli/internal/export"
 	"github.com/guttenbergovitz/vigil-cli/internal/license"
+	"github.com/guttenbergovitz/vigil-cli/internal/policy"
 	"github.com/guttenbergovitz/vigil-cli/internal/secrets"
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
@@ -72,16 +74,19 @@ type Model struct {
 	isMaximized     bool
 	isDetailExpanded bool // true = show detail pane below table
 	progress        ScanProgress
-	startTime       time.Time
-	result          *types.ScanResult
-	graph           *types.DependencyGraph
-	vulns           []VulnEntry
-	secretFindings  []secrets.SecretFinding
-	iacIssues       []container.SecurityIssue
-	licenseFindings []license.LicenseFinding
-	filteredItems   []TUIFinding
-	markedFixed     map[string]bool // CVE/ID -> marked as fixed
-	spinner         spinner.Model
+	startTime        time.Time
+	result           *types.ScanResult
+	evaluation       *policy.EvaluationResult
+	graph            *types.DependencyGraph
+	vulns            []VulnEntry
+	secretFindings   []secrets.SecretFinding
+	iacIssues        []container.SecurityIssue
+	licenseFindings  []license.LicenseFinding
+	filteredItems    []TUIFinding
+	markedFixed      map[string]bool // Canonical finding Key -> locally hidden in UI
+	showHidden       bool            // When true, display locally hidden items so they can be unhidden
+	revealSecrets    bool            // When false (default), secret values are masked
+	spinner          spinner.Model
 	progressBar     progress.Model
 	vulnTable       table.Model
 	reasonVP        viewport.Model
@@ -115,10 +120,20 @@ type VulnMsg struct {
 	Entry VulnEntry
 }
 
-// DoneMsg indicates scan completion.
+// DoneMsg indicates full scan completion across all domains and policy evaluation.
 type DoneMsg struct {
-	Result *types.ScanResult
-	Graph  *types.DependencyGraph
+	Result     *types.ScanResult
+	Evaluation *policy.EvaluationResult
+	Graph      *types.DependencyGraph
+	Secrets    []secrets.SecretFinding
+	IaC        []container.SecurityIssue
+	Licenses   []license.LicenseFinding
+}
+
+// ExportDoneMsg reports completion of an asynchronous file export operation.
+type ExportDoneMsg struct {
+	FileName string
+	Err      error
 }
 
 // ErrorMsg indicates scan error.
@@ -203,12 +218,16 @@ func (m *Model) AddVulnerability(entry VulnEntry) {
 	m.vulns = append(m.vulns, entry)
 }
 
-// SetDone marks scanning as finished and enables interactive exploration mode.
+// SetDone marks scanning as finished, computes canonical policy evaluation, and enables explorer mode.
 func (m *Model) SetDone(result *types.ScanResult, graph *types.DependencyGraph, secretsList []secrets.SecretFinding, iacList []container.SecurityIssue, licensesList []license.LicenseFinding) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.progress.Completed = true
 	m.result = result
+	if result != nil {
+		eval := policy.Evaluate(result, policy.DefaultPolicy(), nil, time.Now().UTC())
+		m.evaluation = &eval
+	}
 	m.graph = graph
 	m.secretFindings = secretsList
 	m.iacIssues = iacList
@@ -272,7 +291,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.mu.Unlock()
 		m.updateTableLayout()
-		return m, ticker()
+		return m, nil
 	case VulnMsg:
 		m.mu.Lock()
 		m.vulns = append(m.vulns, msg.Entry)
@@ -285,15 +304,40 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.mu.Unlock()
 		m.applyFilters()
-		return m, ticker()
+		return m, nil
 	case DoneMsg:
 		m.mu.Lock()
 		m.progress.Completed = true
 		m.result = msg.Result
+		if msg.Evaluation != nil {
+			m.evaluation = msg.Evaluation
+		} else if msg.Result != nil {
+			eval := policy.Evaluate(msg.Result, policy.DefaultPolicy(), nil, time.Now().UTC())
+			m.evaluation = &eval
+		}
 		m.graph = msg.Graph
+		if len(msg.Secrets) > 0 {
+			m.secretFindings = msg.Secrets
+		}
+		if len(msg.IaC) > 0 {
+			m.iacIssues = msg.IaC
+		}
+		if len(msg.Licenses) > 0 {
+			m.licenseFindings = msg.Licenses
+		}
 		m.state = StateExplorer
 		m.mu.Unlock()
 		m.applyFilters()
+		return m, nil
+	case ExportDoneMsg:
+		m.mu.Lock()
+		if msg.Err != nil {
+			m.exportStatus = fmt.Sprintf("Export failed: %v", msg.Err)
+		} else {
+			m.exportStatus = fmt.Sprintf("Exported findings to %s", msg.FileName)
+			m.state = StateExplorer
+		}
+		m.mu.Unlock()
 		return m, nil
 	case ErrorMsg:
 		m.mu.Lock()
@@ -315,6 +359,9 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	if key == "ctrl+c" {
+		if m.cancelFunc != nil {
+			m.cancelFunc()
+		}
 		return m, tea.Quit
 	}
 
@@ -415,31 +462,65 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filterSeverity = "low"
 			m.applyFilters()
 		case "y":
-			// Copy CVE ID to clipboard
+			// Copy CVE/rule ID to clipboard (ignore non-actionable group headers)
 			if m.selectedIdx >= 0 && m.selectedIdx < len(m.filteredItems) {
-				cveID := m.filteredItems[m.selectedIdx].ID
-				if copyToClipboard(cveID) == nil {
-					m.exportStatus = "✓ Copied " + cveID + " to clipboard"
+				item := m.filteredItems[m.selectedIdx]
+				if item.IsGroupHeader {
+					m.exportStatus = "Group header selected (select a finding row to copy ID)"
+					return m, nil
+				}
+				if copyToClipboard(item.ID) == nil {
+					m.exportStatus = "✓ Copied " + item.ID + " to clipboard"
 				} else {
 					m.exportStatus = "✗ Failed to copy to clipboard"
 				}
 			}
 		case "x":
-			// Mark as fixed (hide from view)
+			// Hide/unhide selected finding locally by canonical Key (ID + PURL / location)
 			if m.selectedIdx >= 0 && m.selectedIdx < len(m.filteredItems) {
-				itemID := m.filteredItems[m.selectedIdx].ID
-				m.markedFixed[itemID] = true
-				m.exportStatus = "✓ Marked " + itemID + " as fixed"
+				item := m.filteredItems[m.selectedIdx]
+				if item.IsGroupHeader {
+					m.exportStatus = "Cannot hide a group header"
+					return m, nil
+				}
+				key := item.Key
+				if key == "" {
+					key = item.ID + "|" + item.Package + "@" + item.Version
+				}
+				if m.markedFixed[key] {
+					delete(m.markedFixed, key)
+					m.exportStatus = "✓ Unhidden locally: " + item.ID + " (" + item.Package + ")"
+				} else {
+					m.markedFixed[key] = true
+					m.exportStatus = "✓ Hidden locally (not remediated): " + item.ID + " (" + item.Package + ")"
+				}
 				m.applyFilters()
 			}
 		case "X":
-			// Unmark fixed (show again)
-			if m.selectedIdx >= 0 && m.selectedIdx < len(m.filteredItems) {
-				itemID := m.filteredItems[m.selectedIdx].ID
-				delete(m.markedFixed, itemID)
-				m.exportStatus = "✓ Unmarked " + itemID
-				m.applyFilters()
+			// Restore all locally hidden findings
+			count := len(m.markedFixed)
+			m.markedFixed = make(map[string]bool)
+			m.showHidden = false
+			m.exportStatus = fmt.Sprintf("✓ Restored %d locally hidden finding(s)", count)
+			m.applyFilters()
+		case "v":
+			// Toggle viewing locally hidden items so individual items can be inspected or unhidden
+			m.showHidden = !m.showHidden
+			if m.showHidden {
+				m.exportStatus = "Showing locally hidden findings (press [x] to unhide, [v] to hide again)"
+			} else {
+				m.exportStatus = "Hiding locally hidden findings"
 			}
+			m.applyFilters()
+		case "s":
+			// Explicitly toggle secret value reveal/masking
+			m.revealSecrets = !m.revealSecrets
+			if m.revealSecrets {
+				m.exportStatus = "⚠ Secret values revealed (press [s] to mask)"
+			} else {
+				m.exportStatus = "✓ Secret values masked"
+			}
+			m.applyFilters()
 		case "enter":
 			// Toggle detail expansion
 			m.isDetailExpanded = !m.isDetailExpanded
@@ -504,48 +585,106 @@ func (m *Model) applyFiltersLocked() {
 	// Collect findings according to ActiveTab
 	switch m.activeTab {
 	case TabVulnerabilities:
-		for _, v := range m.vulns {
-			cveID := v.CVE
-			if v.CVEID != "" {
-				cveID = v.CVEID
+		if m.evaluation != nil && len(m.evaluation.Decisions) > 0 {
+			pathByPkg := make(map[string][]string)
+			for _, v := range m.vulns {
+				if len(v.DependencyPath) > 0 {
+					pathByPkg[v.Package] = v.DependencyPath
+				}
 			}
-			pkgDisplay := v.Package
-			chainPrefix := ""
-			if len(v.DependencyPath) > 1 {
-				rootDep := v.DependencyPath[0]
-				pkgDisplay = fmt.Sprintf("%s (via %s)", v.Package, rootDep)
-				chainPrefix = fmt.Sprintf("[Chain: %s] ", strings.Join(v.DependencyPath, " -> "))
-			}
+			for _, fd := range m.evaluation.Decisions {
+				f := fd.Finding
+				var signals []string
+				signals = append(signals, string(fd.Decision))
+				if f.KnownExploited {
+					signals = append(signals, "KEV")
+				}
+				if f.EPSSScore > 0 {
+					signals = append(signals, fmt.Sprintf("EPSS %.1f%%", f.EPSSScore*100))
+				}
+				if fd.AcceptedRisk {
+					signals = append(signals, "Accepted Risk")
+				}
 
-			reason := fmt.Sprintf("%sA vulnerability affects %s (%s). The issue is tracked upstream as %s with CVSS score %.1f.", chainPrefix, v.Package, v.Version, cveID, v.CVSS)
-			if v.CVEDescription != "" {
-				reason = chainPrefix + v.CVEDescription
+				reasonParts := append([]string(nil), fd.Reasoning...)
+				if f.EffectiveScoreReason != "" {
+					reasonParts = append(reasonParts, "Score provenance: "+f.EffectiveScoreReason)
+				}
+				reason := fmt.Sprintf("[%s] %s", strings.Join(signals, " · "), strings.Join(reasonParts, " "))
+
+				depPath := pathByPkg[f.Package+"@"+f.Version]
+				if len(depPath) == 0 {
+					depPath = pathByPkg[f.Package]
+				}
+
+				domainLabel := "SCA:" + string(fd.Decision)
+				items = append(items, TUIFinding{
+					Key:             f.Key,
+					Domain:          domainLabel,
+					Decision:        string(fd.Decision),
+					Package:         f.Package,
+					Version:         f.Version,
+					ID:              f.ID,
+					Severity:        string(f.Severity),
+					CVSS:            f.CVSSScore,
+					Title:           f.Summary,
+					Description:     f.Summary,
+					ReasonFlagged:   reason,
+					DependencyPath:  depPath,
+					Remediation:     "Review policy decision and upgrade affected component version",
+					MissingEvidence: f.MissingEvidence,
+				})
 			}
-			items = append(items, TUIFinding{
-				Domain:         "SCA",
-				Package:        pkgDisplay,
-				Version:        v.Version,
-				ID:             cveID,
-				Severity:       v.Severity,
-				CVSS:           v.CVSS,
-				Title:          v.CVETitle,
-				Description:    v.Description,
-				ReasonFlagged:  reason,
-				DependencyPath: v.DependencyPath,
-				Remediation:    "Upgrade package to non-vulnerable patch version",
-			})
+		} else {
+			for _, v := range m.vulns {
+				cveID := v.CVE
+				if v.CVEID != "" {
+					cveID = v.CVEID
+				}
+				pkgDisplay := v.Package
+				chainPrefix := ""
+				if len(v.DependencyPath) > 1 {
+					rootDep := v.DependencyPath[0]
+					pkgDisplay = fmt.Sprintf("%s (via %s)", v.Package, rootDep)
+					chainPrefix = fmt.Sprintf("[Chain: %s] ", strings.Join(v.DependencyPath, " -> "))
+				}
+
+				reason := fmt.Sprintf("%sA vulnerability affects %s (%s). The issue is tracked upstream as %s with CVSS score %.1f.", chainPrefix, v.Package, v.Version, cveID, v.CVSS)
+				if v.CVEDescription != "" {
+					reason = chainPrefix + v.CVEDescription
+				}
+				items = append(items, TUIFinding{
+					Key:            fmt.Sprintf("%s|%s@%s", cveID, v.Package, v.Version),
+					Domain:         "SCA",
+					Package:        pkgDisplay,
+					Version:        v.Version,
+					ID:             cveID,
+					Severity:       v.Severity,
+					CVSS:           v.CVSS,
+					Title:          v.CVETitle,
+					Description:    v.Description,
+					ReasonFlagged:  reason,
+					DependencyPath: v.DependencyPath,
+					Remediation:    "Upgrade package to non-vulnerable patch version",
+				})
+			}
 		}
 
 	case TabSecrets:
 		for _, s := range m.secretFindings {
 			relPath := filepath.Base(s.FilePath)
+			matchDisplay := secrets.MaskSecret(s.Match) + " (masked — press [s] to reveal)"
+			if m.revealSecrets {
+				matchDisplay = s.Match + " (REVEALED — press [s] to mask)"
+			}
 			items = append(items, TUIFinding{
+				Key:           fmt.Sprintf("SECRET|%s:%d|%s", s.FilePath, s.LineNumber, s.Type),
 				Domain:        "SECRET",
 				Package:       relPath,
 				ID:            string(s.Type),
 				Severity:      "secret",
 				Title:         fmt.Sprintf("Leaked %s at line %d", s.Type, s.LineNumber),
-				Description:   fmt.Sprintf("Hardcoded secret discovered in %s:%d\nMatch: %s", s.FilePath, s.LineNumber, s.Match),
+				Description:   fmt.Sprintf("Hardcoded secret discovered in %s:%d\nMatch: %s", s.FilePath, s.LineNumber, matchDisplay),
 				ReasonFlagged: fmt.Sprintf("High-entropy secret key pattern matching %s discovered in source code (Shannon Entropy: %.2f)", s.Type, s.Entropy),
 				Remediation:   "Revoke secret key immediately and remove from git commit history",
 				RawSecret:     s,
@@ -556,6 +695,7 @@ func (m *Model) applyFiltersLocked() {
 		for _, iac := range m.iacIssues {
 			relPath := filepath.Base(iac.Source)
 			items = append(items, TUIFinding{
+				Key:           fmt.Sprintf("IAC|%s:%d|%s", iac.Source, iac.LineNumber, iac.RuleID),
 				Domain:        "IaC",
 				Package:       relPath,
 				ID:            iac.RuleID,
@@ -577,6 +717,7 @@ func (m *Model) applyFiltersLocked() {
 				reason = "Copyleft license (GPL/AGPL) poses legal infection risk requiring source code disclosure"
 			}
 			items = append(items, TUIFinding{
+				Key:           fmt.Sprintf("LICENSE|%s@%s|%s", lic.PackageName, lic.Version, lic.License),
 				Domain:        "LICENSE",
 				Package:       lic.PackageName,
 				Version:       lic.Version,
@@ -592,8 +733,15 @@ func (m *Model) applyFiltersLocked() {
 
 	case TabDependencyGraph:
 		if m.graph != nil {
-			for _, node := range m.graph.Nodes {
+			keys := make([]string, 0, len(m.graph.Nodes))
+			for k := range m.graph.Nodes {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				node := m.graph.Nodes[k]
 				items = append(items, TUIFinding{
+					Key:           "GRAPH|" + k,
 					Domain:        "GRAPH",
 					Package:       node.Name,
 					Version:       node.Version,
@@ -620,8 +768,12 @@ func (m *Model) applyFiltersLocked() {
 	}
 
 	for _, item := range items {
-		// Skip marked as fixed
-		if m.markedFixed[item.ID] {
+		key := item.Key
+		if key == "" {
+			key = item.ID + "|" + item.Package + "@" + item.Version
+		}
+		// Skip locally hidden findings unless showHidden is toggled on
+		if m.markedFixed[key] && !m.showHidden {
 			continue
 		}
 		if m.activeTab == TabVulnerabilities && m.filterSeverity != "" && !allowedSeverities[strings.ToLower(item.Severity)] {
@@ -744,26 +896,9 @@ func (m *Model) updateTableLayout() {
 
 	var rows []table.Row
 	for _, item := range m.filteredItems {
-		pkgStr := item.Package
-		if len(pkgStr) > targetWidth {
-			if targetWidth > 3 {
-				pkgStr = pkgStr[:targetWidth-3] + "..."
-			}
-		}
-
-		idStr := item.ID
-		if len(idStr) > idWidth {
-			if idWidth > 3 {
-				idStr = idStr[:idWidth-3] + "..."
-			}
-		}
-
-		reasonSummary := item.ReasonFlagged
-		if len(reasonSummary) > reasonWidth {
-			if reasonWidth > 3 {
-				reasonSummary = reasonSummary[:reasonWidth-3] + "..."
-			}
-		}
+		pkgStr := truncateRunes(item.Package, targetWidth)
+		idStr := truncateRunes(item.ID, idWidth)
+		reasonSummary := truncateRunes(item.ReasonFlagged, reasonWidth)
 
 		rows = append(rows, table.Row{
 			item.Domain,
@@ -774,6 +909,20 @@ func (m *Model) updateTableLayout() {
 		})
 	}
 	m.vulnTable.SetRows(rows)
+}
+
+func truncateRunes(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= maxWidth {
+		return s
+	}
+	if maxWidth <= 3 {
+		return string(runes[:maxWidth])
+	}
+	return string(runes[:maxWidth-3]) + "..."
 }
 
 func (m *Model) updateSelectedPaneContents() {
@@ -842,48 +991,46 @@ func (m *Model) updateSelectedPaneContents() {
 }
 
 func (m *Model) executeExport(fmtName string) tea.Cmd {
-	if m.result == nil {
+	m.mu.Lock()
+	res := m.result
+	if res == nil {
 		m.exportStatus = "Error: No scan result available to export"
+		m.mu.Unlock()
 		return nil
 	}
+	m.exportStatus = "Exporting " + fmtName + " report..."
+	m.mu.Unlock()
 
-	ext := fmtName
-	if fmtName == "cyclonedx" {
-		ext = "cyclonedx.json"
-	} else if fmtName == "spdx" {
-		ext = "spdx.json"
+	return func() tea.Msg {
+		ext := fmtName
+		if fmtName == "cyclonedx" {
+			ext = "cyclonedx.json"
+		} else if fmtName == "spdx" {
+			ext = "spdx.json"
+		}
+
+		fileName := fmt.Sprintf("vigil-export-%d.%s", time.Now().Unix(), ext)
+		file, err := os.Create(fileName)
+		if err != nil {
+			return ExportDoneMsg{Err: fmt.Errorf("create export file: %w", err)}
+		}
+		defer file.Close()
+
+		var exportErr error
+		switch fmtName {
+		case "json":
+			exportErr = export.JSON(res, file)
+		case "csv":
+			exportErr = export.CSV(res, file)
+		case "markdown":
+			exportErr = export.Markdown(res, file)
+		case "cyclonedx":
+			exportErr = export.CycloneDX(res, file)
+		case "spdx":
+			exportErr = export.SPDX(res, file)
+		}
+		return ExportDoneMsg{FileName: fileName, Err: exportErr}
 	}
-
-	fileName := fmt.Sprintf("vigil-export-%d.%s", time.Now().Unix(), ext)
-	file, err := os.Create(fileName)
-	if err != nil {
-		m.exportStatus = fmt.Sprintf("Error creating export file: %v", err)
-		return nil
-	}
-	defer file.Close()
-
-	var exportErr error
-	switch fmtName {
-	case "json":
-		exportErr = export.JSON(m.result, file)
-	case "csv":
-		exportErr = export.CSV(m.result, file)
-	case "markdown":
-		exportErr = export.Markdown(m.result, file)
-	case "cyclonedx":
-		exportErr = export.CycloneDX(m.result, file)
-	case "spdx":
-		exportErr = export.SPDX(m.result, file)
-	}
-
-	if exportErr != nil {
-		m.exportStatus = fmt.Sprintf("Export failed: %v", exportErr)
-	} else {
-		m.exportStatus = fmt.Sprintf("Exported findings to %s", fileName)
-		m.state = StateExplorer
-	}
-
-	return nil
 }
 
 // View renders the Lazygit/btm style Fullscreen DevSecOps Multi-Pane TUI
@@ -983,16 +1130,28 @@ func (m *Model) renderScanning() string {
 func (m *Model) renderLazygitExplorer() string {
 	var sections []string
 
-	// 1. Top Header Banner
-	vulnCount := 0
+	// 1. Top Header Banner with Policy Decision, Evidence State, Coverage, and Threat Intel status
+	vulnCount := len(m.vulns)
+	covText := "Coverage: n/a"
+	decisionText := "DECISION: PENDING"
+	evidenceText := "EVIDENCE: UNVERIFIED"
+	tiText := ""
 	if m.result != nil {
 		vulnCount = m.result.TotalVulns
-	} else {
-		vulnCount = len(m.vulns)
+		if m.result.Coverage.TotalPackages > 0 {
+			covText = fmt.Sprintf("Coverage: %d/%d", m.result.Coverage.ScannedPackages, m.result.Coverage.TotalPackages)
+		}
+		if m.result.ThreatIntel.KEV.Status != "" {
+			tiText = fmt.Sprintf(" | KEV: %s | EPSS: %s", m.result.ThreatIntel.KEV.Status, m.result.ThreatIntel.EPSS.Status)
+		}
+	}
+	if m.evaluation != nil {
+		decisionText = fmt.Sprintf("DECISION: %s", m.evaluation.OverallDecision)
+		evidenceText = fmt.Sprintf("EVIDENCE: %s", m.evaluation.EvidenceState)
 	}
 
-	headerText := fmt.Sprintf("🛡️ VIGIL LAZYGIT DEVSECOPS DASHBOARD | %d VULNS | %d SECRETS | %d IAC RISKS",
-		vulnCount, len(m.secretFindings), len(m.iacIssues))
+	headerText := fmt.Sprintf("🛡️ VIGIL SECURITY ASSESSMENT | %s | %s | %s%s | %d VULNS | %d SECRETS | %d IAC",
+		decisionText, evidenceText, covText, tiText, vulnCount, len(m.secretFindings), len(m.iacIssues))
 	sections = append(sections, m.styles.Header.Render(headerText))
 
 	// 2. Navigation Tabs Bar
@@ -1114,7 +1273,8 @@ func (m *Model) renderLazygitExplorer() string {
 		"[↑/↓/h/l] Navigate",
 		"[Enter] Details",
 		"[y] Copy",
-		"[x/X] Mark Fixed",
+		"[x/X/v] Hide/Restore",
+		"[s] Reveal Secret",
 		"[1-5] Tab",
 		"[C/H/M/L] Filter",
 		"[/] Search",
@@ -1187,14 +1347,23 @@ func groupFindingsByPackage(items []TUIFinding) []TUIFinding {
 		groupedMap[item.Package] = append(groupedMap[item.Package], item)
 	}
 
+	pkgs := make([]string, 0, len(groupedMap))
+	for pkg := range groupedMap {
+		pkgs = append(pkgs, pkg)
+	}
+	sort.Strings(pkgs)
+
 	var result []TUIFinding
-	for pkg, list := range groupedMap {
+	for _, pkg := range pkgs {
+		list := groupedMap[pkg]
 		headerFinding := TUIFinding{
-			Domain:        list[0].Domain,
+			Key:           "GROUP|PKG|" + pkg,
+			Domain:        "GROUP",
 			Package:       pkg,
 			ID:            fmt.Sprintf("(%d items)", len(list)),
 			Severity:      list[0].Severity,
 			ReasonFlagged: fmt.Sprintf("Package group containing %d security items", len(list)),
+			IsGroupHeader: true,
 		}
 		result = append(result, headerFinding)
 		result = append(result, list...)
@@ -1244,20 +1413,25 @@ func copyToClipboard(text string) error {
 func groupFindingsBySeverity(items []TUIFinding) []TUIFinding {
 	groupedMap := make(map[string][]TUIFinding)
 	for _, item := range items {
-		sev := strings.ToLower(item.Severity)
+		sev := strings.ToLower(strings.TrimSpace(item.Severity))
+		if sev == "" {
+			sev = "unknown"
+		}
 		groupedMap[sev] = append(groupedMap[sev], item)
 	}
 
 	var result []TUIFinding
-	order := []string{"critical", "high", "medium", "low", "secret", "iac"}
+	order := []string{"critical", "high", "medium", "low", "unknown", "secret", "iac"}
 	for _, sev := range order {
 		if list, ok := groupedMap[sev]; ok && len(list) > 0 {
 			headerFinding := TUIFinding{
+				Key:           "GROUP|SEV|" + sev,
 				Domain:        "GROUP",
 				Package:       strings.ToUpper(sev),
 				ID:            fmt.Sprintf("(%d items)", len(list)),
 				Severity:      sev,
 				ReasonFlagged: fmt.Sprintf("Severity category %s", strings.ToUpper(sev)),
+				IsGroupHeader: true,
 			}
 			result = append(result, headerFinding)
 			result = append(result, list...)

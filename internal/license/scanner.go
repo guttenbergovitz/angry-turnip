@@ -1,6 +1,7 @@
 package license
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
@@ -79,5 +80,36 @@ func AnalyzeGraphLicenses(graph *types.DependencyGraph, licenseMap map[string]st
 		})
 	}
 
+	return findings
+}
+
+// AnalyzeResultLicenses categorises licenses for all resolved dependencies in a ScanResult.
+func AnalyzeResultLicenses(result *types.ScanResult, licenseMap map[string]string) []LicenseFinding {
+	if result == nil || len(result.Dependencies) == 0 {
+		return nil
+	}
+	findings := make([]LicenseFinding, 0, len(result.Dependencies))
+	for _, dep := range result.Dependencies {
+		if strings.TrimSpace(dep.Name) == "" {
+			continue
+		}
+		key := dep.Name + "@" + dep.Version
+		lic := "Unknown"
+		if val, ok := licenseMap[key]; ok && val != "" {
+			lic = val
+		}
+		findings = append(findings, LicenseFinding{
+			PackageName: dep.Name,
+			Version:     dep.Version,
+			License:     lic,
+			Category:    ClassifyLicense(lic),
+		})
+	}
+	sort.Slice(findings, func(i, j int) bool {
+		if findings[i].PackageName != findings[j].PackageName {
+			return findings[i].PackageName < findings[j].PackageName
+		}
+		return findings[i].Version < findings[j].Version
+	})
 	return findings
 }

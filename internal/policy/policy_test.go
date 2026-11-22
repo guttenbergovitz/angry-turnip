@@ -702,10 +702,11 @@ func TestThreatIntelUnavailableEscalatesOnlyWhenConfigured(t *testing.T) {
 		},
 	}
 
-	// DefaultPolicy does not fail basic SCA when optional TI is unavailable, but records EvidenceNotes and MissingEvidence.
+	// DefaultPolicy includes a KEV rule: when KEV lookup explicitly failed (or was not_requested)
+	// on a CVE, it must NEVER silently pass as ALLOW — it defaults to REVIEW and records MissingEvidence.
 	evalDefault := Evaluate(result, DefaultPolicy(), nil, now)
-	if evalDefault.OverallDecision != DecisionAllow {
-		t.Errorf("expected DefaultPolicy not to block medium vuln solely due to TI timeout, got %s", evalDefault.OverallDecision)
+	if evalDefault.OverallDecision != DecisionReview {
+		t.Errorf("expected DefaultPolicy to require REVIEW (never silent ALLOW) when KEV lookup failed, got %s", evalDefault.OverallDecision)
 	}
 	if len(evalDefault.EvidenceNotes) < 2 {
 		t.Errorf("expected EvidenceNotes to record KEV & EPSS failures, got %v", evalDefault.EvidenceNotes)
@@ -720,10 +721,24 @@ func TestThreatIntelUnavailableEscalatesOnlyWhenConfigured(t *testing.T) {
 		t.Errorf("expected MissingEvidence to include failed KEV lookup, got %v", evalDefault.Decisions[0].Finding.MissingEvidence)
 	}
 
-	// Strict TI policy escalates to REVIEW when KEV/EPSS is unavailable.
+	// Status not_requested on a CVE finding also cannot be treated as negative proof.
+	notReqResult := *result
+	notReqDep := result.Dependencies[0]
+	notReqVuln := notReqDep.Vulnerabilities[0]
+	notReqVuln.KEVStatus = types.EnrichmentNotRequested
+	notReqVuln.EPSSStatus = types.EnrichmentNotRequested
+	notReqDep.Vulnerabilities = []types.Vulnerability{notReqVuln}
+	notReqResult.Dependencies = []types.Dependency{notReqDep}
+
+	evalNotReq := Evaluate(&notReqResult, DefaultPolicy(), nil, now)
+	if evalNotReq.OverallDecision != DecisionReview {
+		t.Errorf("expected REVIEW when KEV was not_requested on a CVE finding, got %s", evalNotReq.OverallDecision)
+	}
+
+	// Explicit on_threat_intel_unavailable: BLOCK escalates to BLOCK.
 	strictTI, err := ParsePolicy([]byte(`
 version: 1
-on_threat_intel_unavailable: REVIEW
+on_threat_intel_unavailable: BLOCK
 rules:
   - name: kev-block
     decision: BLOCK
@@ -733,8 +748,25 @@ rules:
 		t.Fatalf("ParsePolicy failed: %v", err)
 	}
 	evalStrict := Evaluate(result, strictTI, nil, now)
-	if evalStrict.OverallDecision != DecisionReview {
-		t.Errorf("expected REVIEW when on_threat_intel_unavailable=REVIEW, got %s", evalStrict.OverallDecision)
+	if evalStrict.OverallDecision != DecisionBlock {
+		t.Errorf("expected BLOCK when on_threat_intel_unavailable=BLOCK, got %s", evalStrict.OverallDecision)
+	}
+
+	// Explicit on_threat_intel_unavailable: ALLOW permits opting into best-effort offline evaluation.
+	lenientTI, err := ParsePolicy([]byte(`
+version: 1
+on_threat_intel_unavailable: ALLOW
+rules:
+  - name: kev-block
+    decision: BLOCK
+    known_exploited: true
+`))
+	if err != nil {
+		t.Fatalf("ParsePolicy failed: %v", err)
+	}
+	evalLenient := Evaluate(result, lenientTI, nil, now)
+	if evalLenient.OverallDecision != DecisionAllow {
+		t.Errorf("expected ALLOW when on_threat_intel_unavailable=ALLOW is explicitly configured, got %s", evalLenient.OverallDecision)
 	}
 }
 
@@ -764,18 +796,27 @@ func TestBaselineScopeComparabilityDistinguishesConfigVsComponents(t *testing.T)
 		t.Errorf("expected compatible=true, added=1, removed=0; got compat=%v added=%d removed=%d warnings=%v", compat, added, removed, warnings)
 	}
 
-	// Changed SkipDevDeps -> incompatible = false with explicit warning.
+	// Changed SkipDevDeps -> incompatible = false, baseline rejected for delta (all findings treated as new), and OverallDecision >= REVIEW.
 	changedConfigScan := &types.ScanResult{
 		LockFile:    "package-lock.json",
 		SkipDevDeps: true,
 		Coverage:    types.ScanCoverage{TotalPackages: 1, ScannedPackages: 1},
 		Dependencies: []types.Dependency{
-			{Name: "express", Version: "4.18.2", Ecosystem: types.EcosystemNPM, Type: types.Production, ScanStatus: types.StatusScanned},
+			{
+				Name:       "express",
+				Version:    "4.18.2",
+				Ecosystem:  types.EcosystemNPM,
+				Type:       types.Production,
+				ScanStatus: types.StatusScanned,
+			},
 		},
 	}
 	eval := Evaluate(changedConfigScan, DefaultPolicy(), baseline, time.Now().UTC())
 	if eval.BaselineScopeCompatible == nil || *eval.BaselineScopeCompatible {
 		t.Errorf("expected BaselineScopeCompatible=false when skip_dev_deps changed, got %v", eval.BaselineScopeCompatible)
+	}
+	if eval.OverallDecision != DecisionReview {
+		t.Errorf("expected incompatible baseline to escalate OverallDecision to at least REVIEW (not ALLOW), got %s", eval.OverallDecision)
 	}
 }
 

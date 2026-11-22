@@ -310,9 +310,11 @@ func (s *Scanner) enrichThreatIntel(ctx context.Context, result *types.ScanResul
 		epssScores map[string]struct {
 			epss float64
 			pct  float64
+			date string
 		}
-		epssErr     error
-		epssFetched time.Time
+		epssErr       error
+		epssFetched   time.Time
+		epssModelDate string
 	)
 
 	if s.KEVEnricher != nil {
@@ -341,12 +343,17 @@ func (s *Scanner) enrichThreatIntel(ctx context.Context, result *types.ScanResul
 				epssScores = make(map[string]struct {
 					epss float64
 					pct  float64
+					date string
 				}, len(scores))
 				for id, sc := range scores {
 					epssScores[id] = struct {
 						epss float64
 						pct  float64
-					}{epss: sc.EPSS, pct: sc.Percentile}
+						date string
+					}{epss: sc.EPSS, pct: sc.Percentile, date: sc.Date}
+					if sc.Date > epssModelDate {
+						epssModelDate = sc.Date
+					}
 				}
 			}
 		}()
@@ -382,6 +389,7 @@ func (s *Scanner) enrichThreatIntel(ctx context.Context, result *types.ScanResul
 			result.ThreatIntel.EPSS = types.SourceEnrichmentStatus{
 				Status:    types.EnrichmentAvailable,
 				FetchedAt: &t,
+				ModelDate: epssModelDate,
 			}
 		}
 	}
@@ -414,6 +422,7 @@ func (s *Scanner) enrichThreatIntel(ctx context.Context, result *types.ScanResul
 				} else if sc, ok := epssScores[cveID]; ok {
 					vuln.EPSSScore = sc.epss
 					vuln.EPSSPercentile = sc.pct
+					vuln.EPSSDate = sc.date
 					vuln.EPSSStatus = types.EnrichmentAvailable
 					vuln.Sources = appendUniqueSource(vuln.Sources, "epss")
 				} else {

@@ -43,6 +43,7 @@ type Finding struct {
 	KEVStatus            types.EnrichmentStatus          `json:"kev_status,omitempty"`
 	EPSSScore            float64                         `json:"epss_score,omitempty"`
 	EPSSPercentile       float64                         `json:"epss_percentile,omitempty"`
+	EPSSDate             string                          `json:"epss_date,omitempty"`
 	EPSSStatus           types.EnrichmentStatus          `json:"epss_status,omitempty"`
 	Sources              []string                        `json:"sources,omitempty"`
 	PublishedAt          *time.Time                      `json:"published_at,omitempty"`
@@ -130,6 +131,7 @@ func BuildFindings(result *types.ScanResult) []Finding {
 				KEVStatus:         vuln.KEVStatus,
 				EPSSScore:         vuln.EPSSScore,
 				EPSSPercentile:    vuln.EPSSPercentile,
+				EPSSDate:          strings.TrimSpace(vuln.EPSSDate),
 				EPSSStatus:        vuln.EPSSStatus,
 				Sources:           sources,
 				PublishedAt:       vuln.PublishedAt,
@@ -269,6 +271,7 @@ func mergeComponentFindings(group []Finding) Finding {
 	out.KEVStatus = ""
 	out.EPSSScore = 0
 	out.EPSSPercentile = 0
+	out.EPSSDate = ""
 	out.EPSSStatus = ""
 	out.Direct = false
 	out.DependencyType = types.Development
@@ -296,8 +299,14 @@ func mergeComponentFindings(group []Finding) Finding {
 		if m.EPSSScore > out.EPSSScore {
 			out.EPSSScore = m.EPSSScore
 			out.EPSSPercentile = m.EPSSPercentile
-		} else if m.EPSSScore == out.EPSSScore && m.EPSSPercentile > out.EPSSPercentile {
-			out.EPSSPercentile = m.EPSSPercentile
+			out.EPSSDate = m.EPSSDate
+		} else if m.EPSSScore == out.EPSSScore {
+			if m.EPSSPercentile > out.EPSSPercentile {
+				out.EPSSPercentile = m.EPSSPercentile
+			}
+			if m.EPSSDate > out.EPSSDate {
+				out.EPSSDate = m.EPSSDate
+			}
 		}
 		out.EPSSStatus = mergeEnrichmentStatus(out.EPSSStatus, m.EPSSStatus)
 		if m.PublishedAt != nil && (publishedAt == nil || m.PublishedAt.Before(*publishedAt)) {
@@ -433,9 +442,13 @@ func collectMissingEvidence(
 	}
 	if kevStatus == types.EnrichmentFailed {
 		missing = append(missing, "CISA KEV lookup (failed)")
+	} else if kevStatus == types.EnrichmentNotRequested {
+		missing = append(missing, "CISA KEV lookup (not requested)")
 	}
 	if epssStatus == types.EnrichmentFailed {
 		missing = append(missing, "FIRST EPSS lookup (failed)")
+	} else if epssStatus == types.EnrichmentNotRequested {
+		missing = append(missing, "FIRST EPSS lookup (not requested)")
 	}
 	return missing
 }

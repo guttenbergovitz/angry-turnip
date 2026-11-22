@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -142,5 +143,126 @@ func TestModelLazygitMultiPaneDashboard(t *testing.T) {
 	m.applyFilters()
 	if len(m.filteredItems) < 2 {
 		t.Errorf("expected grouped items including header, got %d", len(m.filteredItems))
+	}
+}
+
+func TestTUICanonicalEvaluationSecretMaskingAndScopedHide(t *testing.T) {
+	m := NewModel()
+
+	result := &types.ScanResult{
+		Coverage: types.ScanCoverage{
+			TotalPackages:   2,
+			ScannedPackages: 2,
+		},
+		Dependencies: []types.Dependency{
+			{
+				Name:       "alpha",
+				Version:    "1.0.0",
+				Ecosystem:  types.EcosystemNPM,
+				Type:       types.Production,
+				Direct:     true,
+				ScanStatus: types.StatusScanned,
+				Vulnerabilities: []types.Vulnerability{
+					{ID: "CVE-2026-0001", Severity: types.Critical, CVSSScore: 9.8, Summary: "Critical bug in alpha"},
+				},
+			},
+			{
+				Name:       "beta",
+				Version:    "2.0.0",
+				Ecosystem:  types.EcosystemNPM,
+				Type:       types.Production,
+				Direct:     true,
+				ScanStatus: types.StatusScanned,
+				Vulnerabilities: []types.Vulnerability{
+					{ID: "CVE-2026-0001", Severity: types.Critical, CVSSScore: 9.8, Summary: "Same CVE in beta"},
+				},
+			},
+		},
+		TotalVulns:    2,
+		CriticalVulns: 2,
+	}
+
+	secList := []secrets.SecretFinding{
+		{
+			FilePath:   "app.env",
+			LineNumber: 5,
+			Type:       secrets.AWSKey,
+			Match:      "AKIAIOSFODNN7EXAMPLE",
+			Entropy:    4.7,
+		},
+	}
+
+	// Deliver complete DoneMsg (simulating cli.Scan completion after all domains finish)
+	m.Update(DoneMsg{
+		Result:   result,
+		Secrets:  secList,
+		Licenses: license.AnalyzeResultLicenses(result, nil),
+	})
+
+	if m.state != StateExplorer {
+		t.Fatalf("expected StateExplorer after DoneMsg, got %v", m.state)
+	}
+	if m.evaluation == nil || m.evaluation.OverallDecision != "BLOCK" {
+		t.Fatalf("expected canonical evaluation with BLOCK decision, got %+v", m.evaluation)
+	}
+	if len(m.filteredItems) != 2 {
+		t.Fatalf("expected 2 canonical SCA findings, got %d", len(m.filteredItems))
+	}
+
+	// Hide only the first package's CVE-2026-0001 ('x') — the second package with the same CVE must remain visible.
+	m.handleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if len(m.filteredItems) != 1 {
+		t.Fatalf("expected scoped hide to hide only 1 finding (leaving same CVE on other package visible), got %d", len(m.filteredItems))
+	}
+
+	// Toggle showHidden ('v') -> both visible; restore all ('X') -> both unhidden.
+	m.handleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	if len(m.filteredItems) != 2 {
+		t.Errorf("expected 2 items when showHidden is enabled, got %d", len(m.filteredItems))
+	}
+	m.handleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
+	if len(m.markedFixed) != 0 || len(m.filteredItems) != 2 {
+		t.Errorf("expected 'X' to restore all hidden items, hidden=%d visible=%d", len(m.markedFixed), len(m.filteredItems))
+	}
+
+	// Verify secrets are masked by default in TabSecrets and revealed only after pressing 's'.
+	m.switchToTab(TabSecrets)
+	if len(m.filteredItems) != 1 {
+		t.Fatalf("expected 1 secret finding, got %d", len(m.filteredItems))
+	}
+	if strings.Contains(m.filteredItems[0].Description, "AKIAIOSFODNN7EXAMPLE") {
+		t.Errorf("expected secret value to be masked by default, got: %s", m.filteredItems[0].Description)
+	}
+	m.handleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if !strings.Contains(m.filteredItems[0].Description, "AKIAIOSFODNN7EXAMPLE") {
+		t.Errorf("expected secret value to be revealed after pressing 's', got: %s", m.filteredItems[0].Description)
+	}
+}
+
+func TestTUIGroupingIncludesUnknownAndProtectsHeadersAndCtrlCCancels(t *testing.T) {
+	items := []TUIFinding{
+		{Key: "k1", Domain: "SCA", Package: "zlib", ID: "GHSA-1", Severity: "unknown"},
+		{Key: "k2", Domain: "SCA", Package: "alib", ID: "CVE-1", Severity: "critical"},
+	}
+
+	bySev := groupFindingsBySeverity(items)
+	if len(bySev) != 4 { // 2 headers + 2 items (critical + unknown)
+		t.Fatalf("expected 4 rows (including unknown severity group), got %d", len(bySev))
+	}
+	if !bySev[0].IsGroupHeader {
+		t.Errorf("expected first row to be marked IsGroupHeader")
+	}
+
+	byPkg := groupFindingsByPackage(items)
+	if byPkg[0].Package != "alib" || byPkg[2].Package != "zlib" {
+		t.Errorf("expected deterministic alphabetical package group order (alib then zlib), got %s then %s", byPkg[0].Package, byPkg[2].Package)
+	}
+
+	m := NewModel()
+	canceled := false
+	m.SetCancelFunc(func() { canceled = true })
+	m.handleKeyPress(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if !canceled {
+		t.Error("expected ctrl+c to invoke cancelFunc")
 	}
 }

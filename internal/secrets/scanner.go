@@ -34,6 +34,21 @@ type SecretFinding struct {
 	Entropy     float64    `json:"entropy"`
 }
 
+// MaskSecret redacts a detected secret string so plaintext credentials are never
+// leaked to terminal output, logs, or screenshots by default.
+func MaskSecret(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	runes := []rune(trimmed)
+	n := len(runes)
+	if n == 0 {
+		return "********"
+	}
+	if n <= 8 {
+		return "********"
+	}
+	return string(runes[:4]) + "********" + string(runes[n-2:])
+}
+
 // rule defines a pattern matching rule for secret detection.
 type rule struct {
 	secretType SecretType

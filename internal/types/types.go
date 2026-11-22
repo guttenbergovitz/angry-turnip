@@ -65,6 +65,7 @@ const (
 type SourceEnrichmentStatus struct {
 	Status    EnrichmentStatus `json:"status"`
 	FetchedAt *time.Time       `json:"fetched_at,omitempty"`
+	ModelDate string           `json:"model_date,omitempty"` // Upstream dataset/model date (e.g. EPSS score date)
 	Error     string           `json:"error,omitempty"`
 }
 
@@ -95,6 +96,7 @@ type Vulnerability struct {
 	KEVStatus      EnrichmentStatus // Explicit KEV lookup status (available, not_found, failed, not_requested)
 	EPSSScore      float64          // FIRST EPSS 30-day exploitation probability (0.0-1.0)
 	EPSSPercentile float64          // FIRST EPSS percentile rank across all scored CVEs (0.0-1.0)
+	EPSSDate       string           // FIRST EPSS model date (YYYY-MM-DD), distinct from FetchedAt
 	EPSSStatus     EnrichmentStatus // Explicit EPSS lookup status (available, not_found, failed, not_requested)
 }
 

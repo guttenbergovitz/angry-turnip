@@ -379,12 +379,6 @@ func ValidateEvidence(result *types.ScanResult) (EvidenceState, []string) {
 func Evaluate(result *types.ScanResult, pol Policy, baseline *Baseline, now time.Time) EvaluationResult {
 	evidenceState, evidenceNotes := ValidateEvidence(result)
 	findings := BuildFindings(result)
-	delta := ComputeDelta(findings, ScannedPURLSet(result), baseline)
-
-	newSet := make(map[string]bool, len(delta.New))
-	for _, f := range delta.New {
-		newSet[f.Key] = true
-	}
 
 	eval := EvaluationResult{
 		OverallDecision: DecisionAllow,
@@ -393,6 +387,9 @@ func Evaluate(result *types.ScanResult, pol Policy, baseline *Baseline, now time
 		PolicyVersion:   pol.Version,
 		Decisions:       make([]FindingDecision, 0, len(findings)),
 	}
+
+	effectiveBaseline := baseline
+	baselineIncompatible := false
 
 	if result != nil {
 		eval.FailedPackages = result.Coverage.FailedPackages
@@ -414,7 +411,19 @@ func Evaluate(result *types.ScanResult, pol Policy, baseline *Baseline, now time
 			compatible, scopeWarnings, _, _ := CompareBaselineScope(result, baseline)
 			eval.BaselineScopeCompatible = &compatible
 			eval.EvidenceNotes = append(eval.EvidenceNotes, scopeWarnings...)
+			if !compatible {
+				// Reject an incompatible baseline for delta classification so new_only rules
+				// can never be bypassed by comparing against a different scan configuration.
+				effectiveBaseline = nil
+				baselineIncompatible = true
+			}
 		}
+	}
+
+	delta := ComputeDelta(findings, ScannedPURLSet(result), effectiveBaseline)
+	newSet := make(map[string]bool, len(delta.New))
+	for _, f := range delta.New {
+		newSet[f.Key] = true
 	}
 
 	failOnScanError := true
@@ -432,7 +441,7 @@ func Evaluate(result *types.ScanResult, pol Policy, baseline *Baseline, now time
 
 	for _, f := range findings {
 		isNew := newSet[f.Key]
-		fd := evaluateFinding(f, pol, baseline != nil, isNew, now)
+		fd := evaluateFinding(f, pol, effectiveBaseline != nil, baselineIncompatible, isNew, now)
 		eval.Decisions = append(eval.Decisions, fd)
 
 		if fd.Exception != nil {
@@ -454,6 +463,10 @@ func Evaluate(result *types.ScanResult, pol Policy, baseline *Baseline, now time
 		eval.OverallDecision = higherDecision(eval.OverallDecision, fd.Decision)
 	}
 
+	if baselineIncompatible {
+		eval.OverallDecision = higherDecision(eval.OverallDecision, DecisionReview)
+	}
+
 	// Incomplete, unverified, or invalid evidence always overrides finding-level ALLOW / exceptions.
 	if eval.ScanIncomplete || eval.EvidenceState == EvidenceInvalid || eval.EvidenceState == EvidenceUnverified {
 		eval.OverallDecision = DecisionBlock
@@ -462,14 +475,16 @@ func Evaluate(result *types.ScanResult, pol Policy, baseline *Baseline, now time
 	return eval
 }
 
-func evaluateFinding(f Finding, pol Policy, hasBaseline, isNew bool, now time.Time) FindingDecision {
+func evaluateFinding(f Finding, pol Policy, hasBaseline, baselineIncompatible, isNew bool, now time.Time) FindingDecision {
 	fd := FindingDecision{
 		Finding:  f,
 		Decision: DecisionAllow,
 		IsNew:    isNew,
 	}
 
-	if hasBaseline {
+	if baselineIncompatible {
+		fd.Reasoning = append(fd.Reasoning, "Baseline rejected for delta comparison due to incompatible scan configuration; evaluated as new.")
+	} else if hasBaseline {
 		if isNew {
 			fd.Reasoning = append(fd.Reasoning, "New vulnerability introduced since baseline.")
 		} else {
@@ -505,17 +520,26 @@ func evaluateFinding(f Finding, pol Policy, hasBaseline, isNew bool, now time.Ti
 		}
 	}
 
-	if (needsKEV && f.KEVStatus == types.EnrichmentFailed) || (needsEPSS && f.EPSSStatus == types.EnrichmentFailed) {
-		var failedSources []string
-		if needsKEV && f.KEVStatus == types.EnrichmentFailed {
-			failedSources = append(failedSources, "CISA KEV")
+	kevUnverified := needsKEV && isThreatIntelUnverified(f.ID, f.KEVStatus)
+	epssUnverified := needsEPSS && isThreatIntelUnverified(f.ID, f.EPSSStatus)
+	if kevUnverified || epssUnverified {
+		var unverifiedSources []string
+		if kevUnverified {
+			unverifiedSources = append(unverifiedSources, fmt.Sprintf("CISA KEV (%s)", f.KEVStatus))
 		}
-		if needsEPSS && f.EPSSStatus == types.EnrichmentFailed {
-			failedSources = append(failedSources, "FIRST EPSS")
+		if epssUnverified {
+			unverifiedSources = append(unverifiedSources, fmt.Sprintf("FIRST EPSS (%s)", f.EPSSStatus))
 		}
-		fd.Reasoning = append(fd.Reasoning, fmt.Sprintf("Threat intelligence unavailable (%s lookup failed); rules relying on it could not be fully verified.", strings.Join(failedSources, ", ")))
-		if pol.OnThreatIntelUnavailable != "" && decisionRank(pol.OnThreatIntelUnavailable) > decisionRank(fd.Decision) {
-			fd.Decision = pol.OnThreatIntelUnavailable
+		fd.Reasoning = append(fd.Reasoning, fmt.Sprintf("Threat intelligence unverified [%s]; absence of query or lookup failure is not negative proof.", strings.Join(unverifiedSources, ", ")))
+
+		fallbackDecision := pol.OnThreatIntelUnavailable
+		if fallbackDecision == "" {
+			// Default to REVIEW when threat intelligence was explicitly marked failed or not_requested
+			// for a CVE finding while KEV/EPSS rules are active, preventing silent ALLOW.
+			fallbackDecision = DecisionReview
+		}
+		if decisionRank(fallbackDecision) > decisionRank(fd.Decision) {
+			fd.Decision = fallbackDecision
 			fd.MatchedRule = "threat-intel/unavailable"
 		}
 	}
@@ -574,7 +598,11 @@ func ruleMatches(rule Rule, f Finding, isNew bool) bool {
 		return false
 	}
 	if rule.KnownExploited != nil {
-		if f.KEVStatus == types.EnrichmentFailed {
+		// Neither failed nor not_requested constitutes proof of absence or presence.
+		if f.KEVStatus == types.EnrichmentFailed || f.KEVStatus == types.EnrichmentNotRequested {
+			return false
+		}
+		if !*rule.KnownExploited && f.KEVStatus != types.EnrichmentNotFound {
 			return false
 		}
 		if f.KnownExploited != *rule.KnownExploited {
@@ -582,11 +610,18 @@ func ruleMatches(rule Rule, f Finding, isNew bool) bool {
 		}
 	}
 	if rule.MinEPSS > 0 {
-		if f.EPSSStatus == types.EnrichmentFailed || f.EPSSScore < rule.MinEPSS {
+		if f.EPSSStatus == types.EnrichmentFailed || f.EPSSStatus == types.EnrichmentNotRequested || f.EPSSScore < rule.MinEPSS {
 			return false
 		}
 	}
 	return true
+}
+
+func isThreatIntelUnverified(advisoryID string, status types.EnrichmentStatus) bool {
+	if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(advisoryID)), "CVE-") {
+		return false
+	}
+	return status == types.EnrichmentFailed || status == types.EnrichmentNotRequested
 }
 
 func exceptionMatchesScope(ex Exception, f Finding) bool {

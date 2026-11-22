@@ -15,6 +15,7 @@ import (
 	"github.com/guttenbergovitz/vigil-cli/internal/git"
 	"github.com/guttenbergovitz/vigil-cli/internal/license"
 	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
+	"github.com/guttenbergovitz/vigil-cli/internal/policy"
 	"github.com/guttenbergovitz/vigil-cli/internal/scan"
 	"github.com/guttenbergovitz/vigil-cli/internal/secrets"
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
@@ -102,16 +103,38 @@ func Scan(args []string) error {
 		// We could implement a StdoutReporter here if needed
 	}
 
-	// Start scanning in goroutine
+	// Start full-spectrum scan (SCA + Secrets + IaC + Licenses + Policy Evaluation) in goroutine
+	// so all domains finish before the TUI transitions to explorer mode.
+	var (
+		secList []secrets.SecretFinding
+		iacList []container.SecurityIssue
+		licList []license.LicenseFinding
+	)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		result, err := scan.Scan(ctx, absPath, lockFile, lockType, lockHash, lockFilePath, *skipDevDeps, reporter)
 		if err != nil {
 			errorChan <- err
-		} else {
-			resultChan <- result
+			return
 		}
+		secList, _ = secrets.NewScanner().ScanDirectory(absPath)
+		iacList, _ = container.AuditProject(absPath)
+		licList = license.AnalyzeResultLicenses(result, nil)
+		if *scanSecrets || program != nil {
+			result.SecretCount = len(secList)
+		}
+		eval := policy.Evaluate(result, policy.DefaultPolicy(), nil, time.Now().UTC())
+		if program != nil {
+			program.Send(ui.DoneMsg{
+				Result:     result,
+				Evaluation: &eval,
+				Secrets:    secList,
+				IaC:        iacList,
+				Licenses:   licList,
+			})
+		}
+		resultChan <- result
 	}()
 
 	// Run TUI if enabled
@@ -141,22 +164,15 @@ func Scan(args []string) error {
 	case err := <-errorChan:
 		return err
 	case result := <-resultChan:
-		secList, _ := secrets.NewScanner().ScanDirectory(absPath)
-		iacList, _ := container.AuditProject(absPath)
-		licList := license.AnalyzeGraphLicenses(nil, nil)
-
-		// Handle secret scanning if requested or in TUI
-		if *scanSecrets || finalModel != nil {
-			result.SecretCount = len(secList)
-			if *scanSecrets && len(secList) > 0 {
-				fmt.Printf("\n󰌆 Secret Scan Findings (%d leaked credentials/secrets detected):\n", len(secList))
-				for _, f := range secList {
-					relPath, _ := filepath.Rel(absPath, f.FilePath)
-					if relPath == "" {
-						relPath = f.FilePath
-					}
-					fmt.Printf("  • [%s] %s:%d -> %s\n", f.Type, relPath, f.LineNumber, f.Match)
+		// Print masked secret findings in CLI mode when requested (never raw plaintext).
+		if *scanSecrets && len(secList) > 0 {
+			fmt.Printf("\n󰌆 Secret Scan Findings (%d leaked credentials/secrets detected):\n", len(secList))
+			for _, f := range secList {
+				relPath, _ := filepath.Rel(absPath, f.FilePath)
+				if relPath == "" {
+					relPath = f.FilePath
 				}
+				fmt.Printf("  • [%s] %s:%d -> %s (masked)\n", f.Type, relPath, f.LineNumber, secrets.MaskSecret(f.Match))
 			}
 		}
 
@@ -164,7 +180,6 @@ func Scan(args []string) error {
 		var model *ui.Model
 		if finalModel != nil {
 			model = finalModel.(*ui.Model)
-			model.SetDone(result, nil, secList, iacList, licList)
 		}
 		return handleScanResult(result, *outputFmt, model)
 	case <-done:
@@ -305,10 +320,7 @@ func (t *TUIAdapter) Vulnerability(vuln types.Vulnerability, pkg string, path []
 	}
 }
 
-func (t *TUIAdapter) Done(result *types.ScanResult) {
-	if t.program != nil {
-		t.program.Send(ui.DoneMsg{
-			Result: result,
-		})
-	}
+func (t *TUIAdapter) Done(_ *types.ScanResult) {
+	// DoneMsg is sent by cli.Scan after all secondary scanners (Secrets, IaC, Licenses)
+	// and policy evaluation complete so the TUI never enters explorer mode with empty tabs.
 }

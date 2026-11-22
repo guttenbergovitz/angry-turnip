@@ -58,6 +58,14 @@ func New(endpoint string, timeout int) *Client {
 	}
 }
 
+// SetHTTPTransport overrides the underlying HTTP RoundTripper for offline snapshot testing.
+func (c *Client) SetHTTPTransport(rt http.RoundTripper) {
+	if c.httpClient == nil {
+		c.httpClient = &http.Client{Timeout: time.Duration(c.timeout) * time.Second}
+	}
+	c.httpClient.Transport = rt
+}
+
 // QueryRequest represents a request to OSV API.
 type QueryRequest struct {
 	Package struct {
@@ -68,8 +76,9 @@ type QueryRequest struct {
 // QueryResponse represents the OSV API response.
 type QueryResponse struct {
 	Vulns []struct {
-		ID        string        `json:"id"`
-		Summary   string        `json:"summary"`
+		ID        string   `json:"id"`
+		Aliases   []string `json:"aliases"`
+		Summary   string   `json:"summary"`
 		Details   string        `json:"details"`
 		Severity  interface{}   `json:"severity"` // Can be string, array, or object
 		Published string        `json:"published"`
@@ -121,9 +130,13 @@ func (c *Client) QueryWithEcosystemContext(ctx context.Context, pkg, version str
 		purlType = "npm"
 	}
 
-	// Build PURL - handle scoped packages (@scope/name)
+	// Build PURL - handle scoped npm packages (@scope/name) and Maven groupId:artifactId coordinates
 	purl := pkg
-	if strings.HasPrefix(pkg, "@") {
+	if ecosystem == types.EcosystemMaven {
+		if groupID, artifactID, ok := strings.Cut(pkg, ":"); ok {
+			purl = groupID + "/" + artifactID
+		}
+	} else if strings.HasPrefix(pkg, "@") {
 		// Scoped package - @ in scope part needs encoding in PURL
 		purl = strings.ReplaceAll(pkg, "@", "%40")
 	}
@@ -171,11 +184,10 @@ func (c *Client) QueryWithEcosystemContext(ctx context.Context, pkg, version str
 			sev = types.Unknown
 		}
 
-		// Extract CVSS score - try cvssv3 first, then cvssv2, then database_specific
+		// Extract CVSS score - try cvssv3 first, then cvssv2, then OSV severity[], then database_specific
 		var cvssScore float64
 		var cvssVector string
 		if v.CVSSv3 != nil {
-			// Try Score first, then BaseScore
 			if v.CVSSv3.Score > 0 {
 				cvssScore = v.CVSSv3.Score
 			} else if v.CVSSv3.BaseScore > 0 {
@@ -185,17 +197,30 @@ func (c *Client) QueryWithEcosystemContext(ctx context.Context, pkg, version str
 		} else if v.CVSSv2 != nil && v.CVSSv2.Score > 0 {
 			cvssScore = v.CVSSv2.Score
 		}
-		
-		// If still no CVSS, try to extract from database_specific
-		if cvssScore == 0 && v.DatabaseSpecific != nil {
+
+		if vec := extractCVSSVectorFromSeverity(v.Severity); vec != "" && cvssVector == "" {
+			cvssVector = vec
+		}
+
+		// Extract from database_specific (severity and optional numeric cvss_score / cvss_vector)
+		if v.DatabaseSpecific != nil {
 			if dbSpec, ok := v.DatabaseSpecific.(map[string]any); ok {
-				if score := getFloat64FromMap(dbSpec, "cvss_score"); score > 0 {
-					cvssScore = score
-				} else if score := getFloat64FromMap(dbSpec, "cvss3_score"); score > 0 {
-					cvssScore = score
+				if cvssScore == 0 {
+					if score := getFloat64FromMap(dbSpec, "cvss_score"); score > 0 {
+						cvssScore = score
+					} else if score := getFloat64FromMap(dbSpec, "cvss3_score"); score > 0 {
+						cvssScore = score
+					}
 				}
-				if vec := getStringFromMap(dbSpec, "cvss_vector"); vec != "" {
-					cvssVector = vec
+				if cvssVector == "" {
+					if vec := getStringFromMap(dbSpec, "cvss_vector"); vec != "" {
+						cvssVector = vec
+					}
+				}
+				if sev == types.Unknown {
+					if dbSev := getStringFromMap(dbSpec, "severity"); dbSev != "" {
+						sev = types.NormaliseSeverity(types.Severity(dbSev))
+					}
 				}
 			}
 		}
@@ -217,12 +242,20 @@ func (c *Client) QueryWithEcosystemContext(ctx context.Context, pkg, version str
 			refs[i] = ref.URL
 		}
 
-		// Extract CVE ID from references if ID is GHSA-*
+		// Extract CVE ID from aliases first, then references if ID is GHSA-*
 		cveID := ""
-		if !strings.HasPrefix(v.ID, "CVE-") {
-			cveID = extractCVEFromReferences(v.ID, v.References)
-		} else {
+		if strings.HasPrefix(v.ID, "CVE-") {
 			cveID = v.ID
+		} else {
+			for _, alias := range v.Aliases {
+				if a := strings.TrimSpace(alias); strings.HasPrefix(strings.ToUpper(a), "CVE-") {
+					cveID = strings.ToUpper(a)
+					break
+				}
+			}
+			if cveID == "" {
+				cveID = extractCVEFromReferences(v.ID, v.References)
+			}
 		}
 
 		vuln := types.Vulnerability{
@@ -342,6 +375,25 @@ func (c *Client) ScanGraphVulnerabilities(graph *types.DependencyGraph) error {
 	}
 
 	return nil
+}
+
+// extractCVSSVectorFromSeverity extracts a CVSS vector string from OSV's standard
+// severity array: [{"type": "CVSS_V3", "score": "CVSS:3.1/..."}].
+func extractCVSSVectorFromSeverity(sev interface{}) string {
+	arr, ok := sev.([]interface{})
+	if !ok {
+		return ""
+	}
+	for _, elem := range arr {
+		m, ok := elem.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if scoreStr, ok := m["score"].(string); ok && strings.HasPrefix(strings.ToUpper(strings.TrimSpace(scoreStr)), "CVSS:") {
+			return strings.TrimSpace(scoreStr)
+		}
+	}
+	return ""
 }
 
 // extractSeverity handles different severity formats from OSV API:

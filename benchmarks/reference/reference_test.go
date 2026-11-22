@@ -3,12 +3,16 @@ package reference_test
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
+	"github.com/guttenbergovitz/vigil-cli/internal/osv"
 	"github.com/guttenbergovitz/vigil-cli/internal/policy"
 	"github.com/guttenbergovitz/vigil-cli/internal/scan"
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
@@ -57,7 +61,10 @@ func (f *fixtureVulnSource) QueryWithEcosystemContext(_ context.Context, pkg, ve
 	return out, nil
 }
 
-func TestReferenceFixturesGroundTruth(t *testing.T) {
+// TestReferenceFixturesResolutionAndCoverage independently verifies dependency resolution
+// (100% PURL precision and recall, direct/transitive classification, dev/prod scope, and
+// ScanStatus/EvidenceState) across all six supported ecosystems against expected.json.
+func TestReferenceFixturesResolutionAndCoverage(t *testing.T) {
 	ecosystems := []string{"npm", "go", "maven", "python", "cargo", "composer"}
 
 	for _, eco := range ecosystems {
@@ -170,5 +177,92 @@ func TestReferenceFixturesGroundTruth(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+// TestReferenceAdvisoryMatchingFromFrozenOSVSnapshot verifies actual OSV response parsing,
+// CVSS v3.1 vector score calculation, GHSA-to-CVE alias normalization, and canonical finding
+// evaluation against a frozen upstream OSV API payload (independent of expected.json mocks).
+func TestReferenceAdvisoryMatchingFromFrozenOSVSnapshot(t *testing.T) {
+	const frozenLog4jOSVPayload = `{
+		"vulns": [
+			{
+				"id": "GHSA-jfh8-c2jp-5v3q",
+				"summary": "Remote code execution in Apache Log4j2 JNDI lookup",
+				"details": "Apache Log4j2 2.0-beta9 through 2.15.0 JNDI features do not protect against attacker controlled LDAP and other JNDI related endpoints.",
+				"aliases": ["CVE-2021-44228"],
+				"published": "2021-12-10T00:00:00Z",
+				"modified": "2023-11-07T00:00:00Z",
+				"severity": [
+					{
+						"type": "CVSS_V3",
+						"score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H"
+					}
+				],
+				"database_specific": {
+					"severity": "CRITICAL"
+				},
+				"references": [
+					{"type": "ADVISORY", "url": "https://nvd.nist.gov/vuln/detail/CVE-2021-44228"}
+				]
+			}
+		]
+	}`
+
+	osvClient := osv.New("https://osv.snapshot.test/v1/query", 5)
+	osvClient.SetHTTPTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(bodyBytes), "log4j-core") && strings.Contains(string(bodyBytes), "2.14.1") {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(frozenLog4jOSVPayload)),
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"vulns":[]}`)),
+		}, nil
+	}))
+
+	tmpDir := t.TempDir()
+	srcLock := filepath.Join(".", "maven", "pom.xml")
+	dstLock := filepath.Join(tmpDir, "pom.xml")
+	lockBytes, err := os.ReadFile(srcLock)
+	if err != nil {
+		t.Fatalf("read maven fixture: %v", err)
+	}
+	if err := os.WriteFile(dstLock, lockBytes, 0644); err != nil {
+		t.Fatalf("write temp pom.xml: %v", err)
+	}
+
+	scanner := &scan.Scanner{
+		VulnSource: osvClient,
+	}
+	result, err := scanner.Scan(context.Background(), tmpDir, "pom.xml", lockfile.PomXml, "snap-hash", dstLock, false, nil)
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+
+	findings := policy.BuildFindings(result)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 canonical finding from frozen OSV snapshot, got %d: %+v", len(findings), findings)
+	}
+	got := findings[0]
+	if got.ID != "CVE-2021-44228" {
+		t.Errorf("canonical finding ID = %q, want CVE-2021-44228", got.ID)
+	}
+	if got.PURL != "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1" {
+		t.Errorf("canonical finding PURL = %q, want pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1", got.PURL)
+	}
+	if got.Severity != types.Critical || got.CVSSScore < 9.5 || got.CVSSVector != "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" {
+		t.Errorf("expected CRITICAL / CVSS >= 9.5 / CVSS:3.1 vector, got %s / %.1f / %q", got.Severity, got.CVSSScore, got.CVSSVector)
 	}
 }
