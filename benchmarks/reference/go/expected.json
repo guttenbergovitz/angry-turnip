@@ -1,0 +1,14 @@
+{
+  "ecosystem": "Go",
+  "lock_file": "go.mod",
+  "expected_evidence_state": "COMPLETE",
+  "expected_components": [
+    {"purl": "pkg:golang/github.com/gin-gonic/gin@v1.9.0", "type": "production", "direct": true, "scan_status": "scanned"},
+    {"purl": "pkg:golang/github.com/ugorji/go/codec@v1.2.11", "type": "production", "direct": false, "scan_status": "scanned"},
+    {"purl": "pkg:golang/golang.org/x/net@v0.18.0", "type": "production", "direct": true, "scan_status": "scanned"},
+    {"purl": "pkg:golang/golang.org/x/text@v0.13.0", "type": "production", "direct": false, "scan_status": "scanned"}
+  ],
+  "known_historical_cves": [
+    {"purl": "pkg:golang/golang.org/x/net@v0.18.0", "cve": "CVE-2023-45288"}
+  ]
+}

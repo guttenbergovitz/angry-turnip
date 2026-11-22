@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `CompareBaselineScope` and `EvaluationResult.BaselineScopeCompatible` so configuration mismatches emit explicit warnings while routine dependency updates remain comparable.
 - **Source-Specific Evidence Preservation**
   - Preserved per-source advisory records (`SourceEvidence`) through union-find deduplication and added `EffectiveScoreReason` explaining which upstream source(s) supplied the effective severity and CVSS score.
+- **Reference Fixtures & Scanner Comparison Benchmark (`benchmarks/reference/`)**
+  - Added six ground-truth reference fixtures (`npm`, `go`, `maven`, `python`, `cargo`, `composer`) with `expected.json` manifests verifying 100% component PURL precision/recall, `ScanStatus`, `EvidenceState`, and historical CVE findings offline via `go test ./benchmarks/reference/...`.
+  - Added `benchmarks/reference/compare.sh` for side-by-side live comparison against keyless public scanners (OSV-Scanner, Trivy, Grype).
 
 ## [2.3.0] - 2026-11-22
 

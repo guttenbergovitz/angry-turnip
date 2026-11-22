@@ -1,0 +1,14 @@
+{
+  "ecosystem": "Cargo",
+  "lock_file": "Cargo.lock",
+  "expected_evidence_state": "COMPLETE",
+  "expected_components": [
+    {"purl": "pkg:cargo/bytes@1.0.1", "type": "production", "direct": false, "scan_status": "scanned"},
+    {"purl": "pkg:cargo/pin-project-lite@0.2.7", "type": "production", "direct": false, "scan_status": "scanned"},
+    {"purl": "pkg:cargo/smallvec@1.6.0", "type": "production", "direct": true, "scan_status": "scanned"},
+    {"purl": "pkg:cargo/tokio@1.8.0", "type": "production", "direct": true, "scan_status": "scanned"}
+  ],
+  "known_historical_cves": [
+    {"purl": "pkg:cargo/tokio@1.8.0", "cve": "CVE-2021-45710"}
+  ]
+}

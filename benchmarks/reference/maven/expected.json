@@ -1,0 +1,14 @@
+{
+  "ecosystem": "Maven",
+  "lock_file": "pom.xml",
+  "expected_evidence_state": "PARTIAL",
+  "expected_components": [
+    {"purl": "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.13.3", "type": "production", "direct": true, "scan_status": "scanned"},
+    {"purl": "pkg:maven/junit/junit@4.13.2", "type": "development", "direct": true, "scan_status": "scanned"},
+    {"purl": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1", "type": "production", "direct": true, "scan_status": "scanned"},
+    {"purl": "pkg:maven/org.springframework.boot/spring-boot-starter-web@", "type": "production", "direct": true, "scan_status": "unsupported"}
+  ],
+  "known_historical_cves": [
+    {"purl": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1", "cve": "CVE-2021-44228"}
+  ]
+}
