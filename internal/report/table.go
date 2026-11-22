@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // Table generates a compact tabular report.

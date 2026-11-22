@@ -1,7 +1,7 @@
 package lockfile
 
 import (
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // BuildDependencyTree converts flat dependency maps into structured Dependency list.

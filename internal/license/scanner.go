@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // LicenseCategory classifies open-source licenses by legal risk profile.

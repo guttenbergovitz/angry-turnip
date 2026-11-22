@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/export"
-	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
-	"github.com/guttenbergovitz/vigil-cli/internal/report"
+	"github.com/guttenbergovitz/angry-turnip/internal/export"
+	"github.com/guttenbergovitz/angry-turnip/internal/lockfile"
+	"github.com/guttenbergovitz/angry-turnip/internal/report"
 )
 
 func Report(args []string) error {
@@ -32,8 +32,8 @@ func Report(args []string) error {
 		return fmt.Errorf("resolve path: %w", err)
 	}
 
-	// Load cache
-	cachePath := filepath.Join(absPath, ".vigil.cache")
+	// Load cache (.atnp.cache with fallback to legacy .vigil.cache)
+	cachePath := lockfile.ResolveCachePath(absPath)
 	result, err := lockfile.LoadCache(cachePath)
 	if err != nil {
 		return fmt.Errorf("load cache: %w", err)

@@ -7,8 +7,8 @@ vars:
     sh: git rev-parse --short HEAD 2>/dev/null || echo "unknown"
   DATE:
     sh: date -u +"%Y-%m-%dT%H:%M:%SZ"
-  LDFLAGS: -ldflags "-X github.com/guttenbergovitz/vigil-cli/internal/version.Version={{.VERSION}} -X github.com/guttenbergovitz/vigil-cli/internal/version.Commit={{.COMMIT}} -X github.com/guttenbergovitz/vigil-cli/internal/version.Date={{.DATE}}"
-  BINARY: vigil
+  LDFLAGS: -ldflags "-X github.com/guttenbergovitz/angry-turnip/internal/version.Version={{.VERSION}} -X github.com/guttenbergovitz/angry-turnip/internal/version.Commit={{.COMMIT}} -X github.com/guttenbergovitz/angry-turnip/internal/version.Date={{.DATE}}"
+  BINARY: atnp
 
 tasks:
   default:
@@ -19,7 +19,7 @@ tasks:
   build:
     desc: Build binary with version injection
     cmds:
-      - go build {{.LDFLAGS}} -o {{.BINARY}} ./cmd/vigil
+      - go build {{.LDFLAGS}} -o {{.BINARY}} ./cmd/atnp
     sources:
       - cmd/**/*.go
       - internal/**/*.go
@@ -29,7 +29,7 @@ tasks:
   install:
     desc: Install to $GOPATH/bin with version injection
     cmds:
-      - go install {{.LDFLAGS}} ./cmd/vigil
+      - go install {{.LDFLAGS}} ./cmd/atnp
 
   test:
     desc: Run all tests
@@ -96,14 +96,14 @@ tasks:
           --build-arg VERSION={{.VERSION}} \
           --build-arg COMMIT={{.COMMIT}} \
           --build-arg DATE={{.DATE}} \
-          -t vigil:{{.VERSION}} \
-          -t vigil:latest \
+          -t angry-turnip:{{.VERSION}} \
+          -t angry-turnip:latest \
           .
 
   docker-run:
     desc: Run Docker container
     cmds:
-      - docker run --rm vigil:latest version
+      - docker run --rm angry-turnip:latest version
 
   docker-scan:
     desc: Run scan in Docker (mount current dir)
@@ -113,15 +113,15 @@ tasks:
           -v "$(pwd):/scan" \
           -e NVD_API_KEY="${NVD_API_KEY}" \
           -e GITHUB_TOKEN="${GITHUB_TOKEN}" \
-          vigil:latest scan .
+          angry-turnip:latest scan .
 
   docker-push:
     desc: Push to DockerHub (requires login)
     cmds:
-      - docker tag vigil:{{.VERSION}} guttenbergovitz/vigil:{{.VERSION}}
-      - docker tag vigil:latest guttenbergovitz/vigil:latest
-      - docker push guttenbergovitz/vigil:{{.VERSION}}
-      - docker push guttenbergovitz/vigil:latest
+      - docker tag angry-turnip:{{.VERSION}} guttenbergovitz/angry-turnip:{{.VERSION}}
+      - docker tag angry-turnip:latest guttenbergovitz/angry-turnip:latest
+      - docker push guttenbergovitz/angry-turnip:{{.VERSION}}
+      - docker push guttenbergovitz/angry-turnip:latest
 
   docker-readme:
     desc: Update DockerHub repository description/overview page
@@ -131,7 +131,7 @@ tasks:
   docker-clean:
     desc: Remove local Docker image tags
     cmds:
-      - docker rmi vigil:{{.VERSION}} vigil:latest 2>/dev/null || true
+      - docker rmi angry-turnip:{{.VERSION}} angry-turnip:latest 2>/dev/null || true
 
   nix-build:
     desc: Build binary using Nix Flake

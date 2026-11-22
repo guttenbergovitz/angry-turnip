@@ -1,15 +1,15 @@
 # Commands Reference
 
-Complete CLI command documentation.
+Complete CLI command documentation for Angry Turnip (`atnp`).
 
-## vigil scan
+## atnp scan
 
 Scan project for vulnerabilities.
 
 ### Synopsis
 
 ```bash
-vigil scan [path] [flags]
+atnp scan [path] [flags]
 ```
 
 ### Arguments
@@ -28,16 +28,16 @@ vigil scan [path] [flags]
 
 ### Behaviour
 
-1. Locate lock file (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`)
+1. Locate lock file (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `uv.lock`, `poetry.lock`, `Pipfile.lock`, `requirements.txt`, `Cargo.lock`, `composer.lock`, `go.mod`, `pom.xml`, or `gradle.lockfile`)
 2. Parse dependency tree (direct + transitive)
 3. Tag dependencies as production/development
 4. Query OSV API for each unique package@version
 5. Enrich CVSS scores from NVD/GitHub/OSV
 6. Extract CVE IDs and query NVD for details
 7. Query GitHub Security Advisories for GHSA-* IDs
-8. Calculate risk scores
-9. Display real-time progress in interactive TUI
-10. Cache results to `.vigil.cache`
+8. Calculate risk scores and enrich CISA KEV / FIRST EPSS threat intelligence
+9. Display real-time stage progress in interactive TUI
+10. Cache results to `.atnp.cache`
 
 ### Exit Codes
 
@@ -49,31 +49,31 @@ vigil scan [path] [flags]
 
 ```bash
 # Scan current directory
-vigil scan .
+atnp scan .
 
 # Scan specific project
-vigil scan /path/to/project
+atnp scan /path/to/project
 
 # Scan remote repository (public)
-vigil scan https://github.com/user/repo
+atnp scan https://github.com/user/repo
 
 # Scan remote repository (private, requires GITHUB_TOKEN)
 export GITHUB_TOKEN=ghp_xxxxx
-vigil scan https://github.com/user/private-repo
+atnp scan https://github.com/user/private-repo
 
 # Scan via SSH
-vigil scan git@github.com:user/repo.git
+atnp scan git@github.com:user/repo.git
 
 # Scan and export
-vigil scan . --output json
+atnp scan . --output json
 
 # Production dependencies only
-vigil scan . --skip-devdeps
+atnp scan . --skip-devdeps
 ```
 
 ### Remote Scanning
 
-Vigil can scan repositories directly without manual cloning:
+Angry Turnip can scan repositories directly without manual cloning:
 
 **Supported protocols:**
 - `https://` - HTTPS URLs (GitHub, Bitbucket, GitLab)
@@ -155,14 +155,14 @@ Press `q` to quit during scan.
 
 ---
 
-## vigil report
+## atnp report
 
 Generate report from cached scan results.
 
 ### Synopsis
 
 ```bash
-vigil report [flags]
+atnp report [flags]
 ```
 
 ### Flags
@@ -320,35 +320,35 @@ Full scan results in JSON format for automation.
 
 ```bash
 # Default table format
-vigil report
+atnp report
 
 # Security format for AppSec team
-vigil report --format security
+atnp report --format security
 
 # Export CSV for Jira
-vigil report --format csv --export vulns.csv
+atnp report --format csv --export vulns.csv
 
 # Filter critical only
-vigil report --filter critical
+atnp report --filter critical
 
 # Markdown for documentation
-vigil report --format markdown --export SECURITY.md
+atnp report --format markdown --export SECURITY.md
 ```
 
 ### Requirements
 
-Requires `.vigil.cache` from previous `vigil scan` run.
+Requires `.atnp.cache` (or legacy `.vigil.cache`) from a previous `atnp scan` run.
 
 ---
 
-## vigil ci
+## atnp ci
 
-CI/CD security gate command. By default, `vigil ci` executes a fresh vulnerability scan against the current project lock file and fails if any dependency lookup fails (`--fail-on-scan-error=true`), ensuring that stale caches or API errors never produce a false green build.
+CI/CD security gate command. By default, `atnp ci` executes a fresh vulnerability scan against the current project lock file and fails if any dependency lookup fails (`--fail-on-scan-error=true`), ensuring that stale caches or API errors never produce a false green build.
 
 ### Synopsis
 
 ```bash
-vigil ci [flags] [path]
+atnp ci [flags] [path]
 ```
 
 ### Flags
@@ -360,11 +360,11 @@ vigil ci [flags] [path]
 - `--fail-on-unsupported` - Fail CI gate if any dependency has unresolved or unsupported metadata (default: `true`)
 - `--skip-devdeps` - Skip development dependencies during scan (default: `false`)
 - `--lockfile <filename>` - Explicitly specify lock file name (e.g. `go.mod`, `package-lock.json`)
-- `--use-cache` - Evaluate `.vigil.cache` instead of running a fresh scan; strictly requires matching lock file SHA-256 hash and cache age within `--max-cache-age` (default: `false`)
-- `--max-cache-age <duration>` - Maximum allowed age of `.vigil.cache` when `--use-cache` is enabled (default: `24h`)
+- `--use-cache` - Evaluate `.atnp.cache` (or legacy `.vigil.cache`) instead of running a fresh scan; strictly requires matching lock file SHA-256 hash and cache age within `--max-cache-age` (default: `false`)
+- `--max-cache-age <duration>` - Maximum allowed age of `.atnp.cache` when `--use-cache` is enabled (default: `24h`)
 - `--policy <file>` - Path to a declarative YAML policy-as-code file (evaluates `ALLOW`/`REVIEW`/`BLOCK` rules and time-bounded exceptions)
-- `--baseline <file>` - Path to a `.vigil.baseline.json` snapshot for delta evaluation (`new_only` rules)
-- `--format <format>` - Output format (text, json, csv, markdown)
+- `--baseline <file>` - Path to a `.atnp.baseline.json` snapshot for delta evaluation (`new_only` rules)
+- `--format <format>` - Output format (text, json, sarif, csv, markdown)
 
 ### Exit Codes
 
@@ -376,16 +376,16 @@ vigil ci [flags] [path]
 
 ```bash
 # Fail on high or critical
-vigil ci --fail-on high
+atnp ci --fail-on high
 
 # Fail on CVSS ≥ 8.0
-vigil ci --fail-on-cvss 8.0
+atnp ci --fail-on-cvss 8.0
 
 # Combined severity and CVSS check
-vigil ci --fail-on high --fail-on-cvss 7.5
+atnp ci --fail-on high --fail-on-cvss 7.5
 
 # Output JSON for processing
-vigil ci --fail-on critical --format json
+atnp ci --fail-on critical --format json
 ```
 
 ### CI/CD Integration
@@ -393,74 +393,74 @@ vigil ci --fail-on critical --format json
 ```yaml
 # GitHub Actions
 - name: Security gate
-  run: vigil ci --fail-on high
+  run: atnp ci --fail-on high
 
 # GitLab CI
 script:
-  - vigil ci --fail-on critical
+  - atnp ci --fail-on critical
 
 # Jenkins
-sh 'vigil ci --fail-on high'
+sh 'atnp ci --fail-on high'
 ```
 
 ---
 
-## vigil explain
+## atnp explain
 
 Explain why a specific vulnerability is allowed, flagged for manual review, or blocked, including matched policy rules, provenance, and missing evidence.
 
 ### Synopsis
 
 ```bash
-vigil explain <vuln-id> [path] [flags]
+atnp explain <vuln-id> [path] [flags]
 ```
 
 ### Flags
 
-- `--policy <file>` - Path to YAML policy file (defaults to Vigil's built-in policy)
+- `--policy <file>` - Path to YAML policy file (defaults to Angry Turnip's built-in policy)
 - `--baseline <file>` - Path to baseline JSON file for delta context
 - `--format <format>` - Output format (`text`, `json`)
 
 ### Example
 
 ```bash
-vigil explain CVE-2026-0001 . --policy vigil.yaml --baseline .vigil.baseline.json
+atnp explain CVE-2026-0001 . --policy atnp.yaml --baseline .atnp.baseline.json
 ```
 
 ---
 
-## vigil baseline
+## atnp baseline
 
-Write a deterministic JSON baseline snapshot of current findings from `.vigil.cache` for future delta analysis. Refuses to write a baseline if the cache is stale, does not match the current lock file SHA-256 hash, or has incomplete scan coverage (`FailedPackages > 0` or `UnsupportedPackages > 0`).
+Write a deterministic JSON baseline snapshot of current findings from `.atnp.cache` (or legacy `.vigil.cache`) for future delta analysis. Refuses to write a baseline if the cache is stale, does not match the current lock file SHA-256 hash, or has incomplete scan coverage (`FailedPackages > 0` or `UnsupportedPackages > 0`).
 
 ### Synopsis
 
 ```bash
-vigil baseline [path] [--output <file>] [--lockfile <name>] [--max-cache-age <duration>]
+atnp baseline [path] [--output <file>] [--lockfile <name>] [--max-cache-age <duration>]
 ```
 
 ### Example
 
 ```bash
-vigil baseline . --output .vigil.baseline.json
+atnp baseline . --output .atnp.baseline.json
 ```
 
 ---
 
-## vigil version
+## atnp version
 
 Display version information.
 
 ### Synopsis
 
 ```bash
-vigil version
+atnp version
 ```
 
 ### Output
 
 ```
-vigil version 0.1.0
+atnp 2.8.0 (commit: ..., built: ...)
 ```
 
 ---
@@ -469,15 +469,15 @@ vigil version 0.1.0
 
 ### Environment Variables
 
-Vigil works without any API keys using free public sources (OSV.dev, unauthenticated GitHub Advisory REST, CISA KEV, and FIRST EPSS). All optional keys below are **free**:
+Angry Turnip works without any API keys using free public sources (OSV.dev, unauthenticated GitHub Advisory REST, CISA KEV, and FIRST EPSS). All optional keys below are **free**:
 
 - `NVD_API_KEY` (**Free** — request at [nvd.nist.gov/developers/request-an-api-key](https://nvd.nist.gov/developers/request-an-api-key)): enables authoritative NVD CVE enrichment (50 requests / 30s, globally rate-limited). When unset, NVD queries are skipped.
 - `GITHUB_TOKEN` (**Free** — create a Personal Access Token at [github.com/settings/tokens](https://github.com/settings/tokens); no scopes required for public advisories, read-only `repo` scope only when scanning private GitHub repositories): switches GHSA enrichment from public REST (60 requests/hour) to GraphQL (5,000 requests/hour).
-- `VIGIL_WORKERS` (optional, `1`–`100`, default `10`): number of concurrent scan workers.
+- `ATNP_WORKERS` (optional, `1`–`100`, default `10`; falls back to legacy `VIGIL_WORKERS`): number of concurrent scan workers.
 
 ### Cache Location
 
-Scan results cached in `.vigil.cache` (JSON format) in scanned directory.
+Scan results cached in `.atnp.cache` (JSON format) in scanned directory (with read fallback to `.vigil.cache` if present).
 
 ### Error Handling
 

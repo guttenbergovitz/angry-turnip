@@ -1,6 +1,6 @@
 # Examples
 
-Practical use cases for Vigil.
+Practical use cases for Angry Turnip (`atnp`).
 
 ## Pre-commit Security Check
 
@@ -10,48 +10,48 @@ Scan before committing changes:
 #!/bin/bash
 # .git/hooks/pre-commit
 
-vigil scan .
+atnp scan . --no-tui
 if [ $? -ne 0 ]; then
-  echo "❌ Vulnerabilities found. Run 'vigil report' to review."
+  echo "❌ Vulnerabilities found. Run 'atnp report' to review."
   exit 1
 fi
 ```
 
 ## GitHub Actions CI
 
-```.yaml
+```yaml
 name: Security Scan
 
 on: [push, pull_request]
 
 jobs:
-  vigil:
+  angry-turnip:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.27'
 
-      - name: Install Vigil
-        run: go install github.com/guttenbergovitz/vigil-cli/cmd/vigil@latest
+      - name: Install Angry Turnip
+        run: go install github.com/guttenbergovitz/angry-turnip/cmd/atnp@latest
 
       - name: Scan dependencies
-        run: vigil scan .
+        run: atnp scan . --no-tui
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check for high-severity vulns
-        run: vigil ci --fail-on high
+        run: atnp ci --fail-on high
 
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: security-report
-          path: .vigil.cache
+          path: .atnp.cache
 ```
 
 ## GitLab CI Pipeline
@@ -59,17 +59,15 @@ jobs:
 ```yaml
 security_scan:
   stage: test
-  image: golang:1.24
+  image: golang:1.27
   script:
-    - go install github.com/guttenbergovitz/vigil-cli/cmd/vigil@latest
-    - vigil scan .
-    - vigil ci --fail-on critical
+    - go install github.com/guttenbergovitz/angry-turnip/cmd/atnp@latest
+    - atnp scan . --no-tui
+    - atnp ci --fail-on critical
   artifacts:
     when: always
     paths:
-      - .vigil.cache
-    reports:
-      junit: vigil-report.xml
+      - .atnp.cache
 ```
 
 ## Jenkins Pipeline
@@ -85,22 +83,22 @@ pipeline {
     stages {
         stage('Security Scan') {
             steps {
-                sh 'go install github.com/guttenbergovitz/vigil-cli/cmd/vigil@latest'
-                sh 'vigil scan .'
-                sh 'vigil report --format json --export security.json'
+                sh 'go install github.com/guttenbergovitz/angry-turnip/cmd/atnp@latest'
+                sh 'atnp scan . --no-tui'
+                sh 'atnp report --format json --export security.json'
             }
         }
 
         stage('Gate Check') {
             steps {
-                sh 'vigil ci --fail-on high'
+                sh 'atnp ci --fail-on high'
             }
         }
     }
 
     post {
         always {
-            archiveArtifacts artifacts: '.vigil.cache,security.json'
+            archiveArtifacts artifacts: '.atnp.cache,security.json'
         }
     }
 }
@@ -116,8 +114,8 @@ Generate and email weekly security summary:
 
 cd /path/to/project
 
-vigil scan .
-vigil report --format security --export /tmp/security-report.txt
+atnp scan . --no-tui
+atnp report --format security --export /tmp/security-report.txt
 
 # Email to team
 mail -s "Weekly Security Scan - $(date +%Y-%m-%d)" \
@@ -148,8 +146,8 @@ PROJECTS=(
 for project in "${PROJECTS[@]}"; do
   echo "Scanning $project..."
   cd "$project"
-  vigil scan .
-  vigil report --format csv --export "$project-vulns.csv"
+  atnp scan . --no-tui
+  atnp report --format csv --export "$project-vulns.csv"
 done
 
 # Merge CSV files
@@ -164,8 +162,8 @@ Post to Slack when critical vulnerabilities found:
 #!/bin/bash
 # scan-and-notify.sh
 
-vigil scan .
-vigil report --filter critical --format json --export critical.json
+atnp scan . --no-tui
+atnp report --filter critical --format json --export critical.json
 
 if [ -s critical.json ]; then
   COUNT=$(jq '.dependencies[].vulnerabilities | length' critical.json | awk '{s+=$1} END {print s}')
@@ -176,7 +174,7 @@ if [ -s critical.json ]; then
       \"text\": \"🚨 $COUNT critical vulnerabilities found in production\",
       \"attachments\": [{
         \"color\": \"danger\",
-        \"text\": \"Run \`vigil report\` for details\"
+        \"text\": \"Run \`atnp report\` for details\"
       }]
     }"
 fi
@@ -191,19 +189,19 @@ Check if update introduces new vulnerabilities:
 # compare-vulns.sh
 
 # Scan before update
-vigil scan .
-cp .vigil.cache .vigil.cache.before
+atnp scan . --no-tui
+cp .atnp.cache .atnp.cache.before
 
 # Update dependencies
 npm update
 
 # Scan after update
-vigil scan .
-cp .vigil.cache .vigil.cache.after
+atnp scan . --no-tui
+cp .atnp.cache .atnp.cache.after
 
 # Compare
-diff <(jq -S '.dependencies[].vulnerabilities[].id' .vigil.cache.before) \
-     <(jq -S '.dependencies[].vulnerabilities[].id' .vigil.cache.after)
+diff <(jq -S '.dependencies[].vulnerabilities[].id' .atnp.cache.before) \
+     <(jq -S '.dependencies[].vulnerabilities[].id' .atnp.cache.after)
 ```
 
 ## Filter Production Dependencies Only
@@ -211,8 +209,8 @@ diff <(jq -S '.dependencies[].vulnerabilities[].id' .vigil.cache.before) \
 Ignore dev dependencies for production deployment checks:
 
 ```bash
-vigil scan . --skip-devdeps
-vigil report --format security
+atnp scan . --skip-devdeps
+atnp report --format security
 ```
 
 ## CVSS Threshold Gate
@@ -221,7 +219,7 @@ Fail on specific CVSS score:
 
 ```bash
 # Fail if any vuln has CVSS ≥ 8.0
-vigil ci --fail-on-cvss 8.0
+atnp ci --fail-on-cvss 8.0
 ```
 
 ## Export to Jira/Linear
@@ -229,8 +227,8 @@ vigil ci --fail-on-cvss 8.0
 Generate CSV for import into issue trackers:
 
 ```bash
-vigil scan .
-vigil report --format csv --export vulnerabilities.csv
+atnp scan . --no-tui
+atnp report --format csv --export vulnerabilities.csv
 
 # CSV has columns: package, version, type, cve_id, summary, severity, risk_score
 # Import into Jira/Linear as tasks
@@ -246,11 +244,11 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
-FROM golang:1.24 AS security-scan
+FROM golang:1.27 AS security-scan
 WORKDIR /app
 COPY --from=deps /app/package-lock.json ./
-RUN go install github.com/guttenbergovitz/vigil-cli/cmd/vigil@latest
-RUN vigil scan . && vigil ci --fail-on critical
+RUN go install github.com/guttenbergovitz/angry-turnip/cmd/atnp@latest
+RUN atnp scan . --no-tui && atnp ci --fail-on critical
 
 FROM node:20-slim
 WORKDIR /app
@@ -270,7 +268,7 @@ Scan all packages in monorepo:
 find . -name "package-lock.json" -o -name "yarn.lock" -o -name "pnpm-lock.yaml" | while read lockfile; do
   dir=$(dirname "$lockfile")
   echo "Scanning $dir..."
-  (cd "$dir" && vigil scan .)
+  (cd "$dir" && atnp scan . --no-tui)
 done
 ```
 
@@ -279,8 +277,8 @@ done
 Generate JSON for custom dashboards:
 
 ```bash
-vigil scan .
-vigil report --format json --export dashboard-data.json
+atnp scan . --no-tui
+atnp report --format json --export dashboard-data.json
 
 # Parse with jq for metrics
 echo "Total vulnerabilities: $(jq '.total_vulns' dashboard-data.json)"
@@ -297,8 +295,8 @@ Track remediation over time:
 # track-remediation.sh
 
 DATE=$(date +%Y-%m-%d)
-vigil scan .
-vigil report --format json --export "scans/scan-$DATE.json"
+atnp scan . --no-tui
+atnp report --format json --export "scans/scan-$DATE.json"
 
 # Compare with last week
 LAST_WEEK=$(date -d '7 days ago' +%Y-%m-%d)
@@ -321,8 +319,8 @@ Ensure vulnerabilities fixed within SLA:
 # High: 30 days
 # Medium: 90 days
 
-vigil scan .
-vigil report --format json --export current.json
+atnp scan . --no-tui
+atnp report --format json --export current.json
 
 jq -r '.dependencies[].vulnerabilities[] |
   select(.severity == "critical" and

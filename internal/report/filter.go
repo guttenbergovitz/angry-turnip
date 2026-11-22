@@ -1,6 +1,6 @@
 package report
 
-import "github.com/guttenbergovitz/vigil-cli/internal/types"
+import "github.com/guttenbergovitz/angry-turnip/internal/types"
 
 // FilterByLevel filters scan results to show only vulnerabilities at or above the specified level.
 func FilterByLevel(result *types.ScanResult, level string) *types.ScanResult {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // CSV exports scan results in CSV format.

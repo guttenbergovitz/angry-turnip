@@ -109,7 +109,7 @@ func (m *Model) renderScanning() string {
 		targetInfo += " · " + m.lockFileName
 	}
 
-	header := m.styles.Header.Render(fmt.Sprintf("VIGIL / SCAN RUNNING %s | %s | Workers: %d | Elapsed: %s",
+	header := m.styles.Header.Render(fmt.Sprintf("ANGRY TURNIP / SCAN RUNNING %s | %s | Workers: %d | Elapsed: %s",
 		m.spinner.View(), targetInfo, workers, elapsed))
 
 	var body []string

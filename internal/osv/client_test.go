@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 func TestQueryPackage(t *testing.T) {

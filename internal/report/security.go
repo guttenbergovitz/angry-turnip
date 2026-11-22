@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // ReleaseGate represents the release decision

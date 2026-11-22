@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // Client provides access to GitHub Security Alerts API
@@ -41,7 +41,7 @@ type AlertResponse struct {
 			} `json:"package"`
 			ManifestPath string `json:"manifest_path"`
 			Requirements struct {
-				File   string `json:"file"`
+				File        string `json:"file"`
 				Requirement string `json:"requirement"`
 			} `json:"requirements"`
 		} `json:"dependency"`
@@ -58,10 +58,10 @@ type AlertResponse struct {
 			References []struct {
 				URL string `json:"url"`
 			} `json:"references"`
-			PublishedAt string `json:"published_at"`
-			UpdatedAt   string `json:"updated_at"`
+			PublishedAt string  `json:"published_at"`
+			UpdatedAt   string  `json:"updated_at"`
 			WithdrawnAt *string `json:"withdrawn_at"`
-			Description string `json:"description"`
+			Description string  `json:"description"`
 			CVSS        struct {
 				Score  float64 `json:"score"`
 				Vector string  `json:"vector_string"`

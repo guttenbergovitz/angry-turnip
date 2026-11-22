@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Product Rebrand: Vigil CLI → Angry Turnip (`atnp`) ([ADR-014](documentation/adr/014-rebrand-vigil-to-angry-turnip.md))**
+  - Rebranded product identity from **Vigil CLI** (`vigil`) to **Angry Turnip** (`atnp`) and migrated Go module path from `github.com/guttenbergovitz/vigil-cli` to `github.com/guttenbergovitz/angry-turnip`.
+  - Added canonical CLI entry point `./cmd/atnp` (`atnp <scan|report|ci|explain|baseline|version>`) while retaining `./cmd/vigil` as a thin compatibility wrapper.
+  - Updated default cache filename to `.atnp.cache` (with automatic read fallback to `.vigil.cache` via `lockfile.ResolveCachePath`), default baseline filename to `.atnp.baseline.json`, and worker concurrency variable to `ATNP_WORKERS` (with fallback to `VIGIL_WORKERS`).
+  - Updated TUI assessment headers (`ANGRY TURNIP / SCAN RUNNING`, `ANGRY TURNIP / ASSESSMENT`), SARIF 2.1.0 driver metadata (`driver.name: "Angry Turnip"`, `ATNP-*` diagnostic rules), CycloneDX/SPDX SBOM tool metadata (`vendor: "Angry Turnip"`, `name: "atnp"`), CI workflows, `Taskfile.yml`, `Dockerfile`, `flake.nix`, and user documentation.
+
 ## [2.8.0] - 2026-11-22
 
 ### Added

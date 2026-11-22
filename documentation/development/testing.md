@@ -1,6 +1,6 @@
 # Testing Guide
 
-Running and writing tests for Vigil.
+Running and writing tests for Angry Turnip (`atnp`).
 
 ## Running Tests
 

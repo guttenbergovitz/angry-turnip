@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // QueryGHSA queries GitHub Security Advisory API for a specific GHSA ID
@@ -20,7 +20,7 @@ func (c *Client) QueryGHSA(ghsaID string) (*types.Vulnerability, error) {
 	}
 
 	url := fmt.Sprintf("%s/graphql", c.endpoint)
-	
+
 	// GraphQL query for GitHub Security Advisory
 	query := fmt.Sprintf(`{
 		"query": "query { securityAdvisory(ghsaId: \"%s\") { ghsaId summary description severity cvss { score vectorString } publishedAt updatedAt identifiers { type value } } }"
@@ -49,13 +49,13 @@ func (c *Client) QueryGHSA(ghsaID string) (*types.Vulnerability, error) {
 	var graphqlResp struct {
 		Data struct {
 			SecurityAdvisory struct {
-				GHSAID       string `json:"ghsaId"`
-				Summary      string `json:"summary"`
-				Description  string `json:"description"`
-				Severity     string `json:"severity"`
-				CVSS         struct {
-					Score      float64 `json:"score"`
-					VectorString string `json:"vectorString"`
+				GHSAID      string `json:"ghsaId"`
+				Summary     string `json:"summary"`
+				Description string `json:"description"`
+				Severity    string `json:"severity"`
+				CVSS        struct {
+					Score        float64 `json:"score"`
+					VectorString string  `json:"vectorString"`
 				} `json:"cvss"`
 				PublishedAt string `json:"publishedAt"`
 				UpdatedAt   string `json:"updatedAt"`
@@ -117,7 +117,7 @@ func (c *Client) QueryGHSA(ghsaID string) (*types.Vulnerability, error) {
 func (c *Client) queryGHSAWithoutAuth(ghsaID string) (*types.Vulnerability, error) {
 	// GitHub Security Advisories are public, try REST API
 	url := fmt.Sprintf("https://api.github.com/advisories/%s", ghsaID)
-	
+
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -142,8 +142,8 @@ func (c *Client) queryGHSAWithoutAuth(ghsaID string) (*types.Vulnerability, erro
 		Description string `json:"description"`
 		Severity    string `json:"severity"`
 		CVSS        struct {
-			Score       float64 `json:"score"`
-			VectorString string `json:"vector_string"`
+			Score        float64 `json:"score"`
+			VectorString string  `json:"vector_string"`
 		} `json:"cvss"`
 		PublishedAt string `json:"published_at"`
 		UpdatedAt   string `json:"updated_at"`
@@ -190,4 +190,3 @@ func (c *Client) queryGHSAWithoutAuth(ghsaID string) (*types.Vulnerability, erro
 		Sources:     []string{"github"},
 	}, nil
 }
-

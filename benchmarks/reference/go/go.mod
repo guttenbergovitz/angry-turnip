@@ -1,4 +1,4 @@
-module github.com/example/vigil-ref-go
+module github.com/example/atnp-ref-go
 
 go 1.24.0
 

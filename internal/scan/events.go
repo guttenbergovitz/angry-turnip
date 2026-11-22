@@ -2,7 +2,7 @@ package scan
 
 import "time"
 
-// Stage identifies an observable phase of the Vigil security assessment pipeline.
+// Stage identifies an observable phase of the Angry Turnip security assessment pipeline.
 type Stage string
 
 const (

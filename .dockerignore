@@ -8,12 +8,15 @@ documentation/
 !README.md
 
 # Build artifacts
+atnp
 vigil
 bin/
 dist/
 .task/
 
 # Cache
+.atnp.cache
+.atnp/
 .vigil.cache
 .vigil/
 .cache/

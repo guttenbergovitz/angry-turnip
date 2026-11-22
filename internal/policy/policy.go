@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 	"gopkg.in/yaml.v3"
 )
 
@@ -109,7 +109,7 @@ type EvaluationResult struct {
 	UnsupportedPackages     int                        `json:"unsupported_packages"`
 }
 
-// DefaultPolicy returns Vigil's built-in deterministic security policy.
+// DefaultPolicy returns Angry Turnip's built-in deterministic security policy.
 // Known HIGH vulnerabilities in production remain subject to REVIEW unless formally
 // accepted via an active, scoped exception. Actively exploited (CISA KEV) production
 // vulnerabilities are blocked regardless of severity.

@@ -1,21 +1,21 @@
-# Vigil Documentation
+# Angry Turnip Documentation
 
-Complete documentation for Vigil vulnerability scanner.
+Complete documentation for **Angry Turnip (`atnp`)** vulnerability scanner and security policy engine (formerly **Vigil CLI**).
 
 ## Getting Started
 
-New to Vigil? Start here:
+New to Angry Turnip? Start here:
 
-- [Installation](getting-started/installation.md) - Install Vigil on your system
+- [Installation](getting-started/installation.md) - Install `atnp` on your system
 - [Quick Start](getting-started/quick-start.md) - First scan in 5 minutes
 - [Examples](getting-started/examples.md) - Common use cases and workflows
 
 ## User Guide
 
-Using Vigil in production:
+Using Angry Turnip in production:
 
-- [Commands](user-guide/commands.md) - Complete CLI reference
-- [Interactive TUI Dashboard](user-guide/tui.md) - Fullscreen Lazygit/btm multi-pane dashboard
+- [Commands](user-guide/commands.md) - Complete CLI reference (`atnp scan`, `atnp report`, `atnp ci`, `atnp explain`, `atnp baseline`, `atnp version`)
+- [Interactive TUI Assessment View](user-guide/tui.md) - Observable stage scanning & decision-first terminal explorer
 - [Reports](user-guide/reports.md) - Understanding output formats
 - [Troubleshooting](user-guide/troubleshooting.md) - Common issues and solutions
 
@@ -29,7 +29,7 @@ Technical deep-dive:
 
 ## Development
 
-Contributing to Vigil:
+Contributing to Angry Turnip:
 
 - [Setup](development/setup.md) - Development environment setup
 - [Contributing](development/contributing.md) - Contribution guidelines
@@ -37,7 +37,7 @@ Contributing to Vigil:
 
 ## Architecture Decision Records
 
-Historical design decisions:
+Historical and current design decisions:
 
 - [ADR-001: Language Choice](adr/001-language-choice.md)
 - [ADR-002: OSV API Integration](adr/002-osv-api-integration.md)
@@ -50,8 +50,11 @@ Historical design decisions:
 - [ADR-009: Full-Spectrum Security & SBOM Engine](adr/009-full-spectrum-security-and-sbom.md)
 - [ADR-010: Java Ecosystem Support (Maven & Gradle)](adr/010-java-ecosystem-support.md)
 - [ADR-011: Fullscreen DevSecOps Dashboard TUI](adr/011-fullscreen-devsecops-tui.md)
+- [ADR-012: Hardened Multi-Ecosystem Dependency Resolution](adr/012-hardened-multi-ecosystem-dependency-resolution.md)
+- [ADR-013: Explainable Policy Decisions, Baselines, and Evidence Completeness](adr/013-explainable-policy-decisions.md)
+- [ADR-014: Rebrand Vigil CLI as Angry Turnip with atnp executable](adr/014-rebrand-vigil-to-angry-turnip.md)
 
 ## Quick Links
 
 - [Main README](../README.md)
-- [GitHub Repository](https://github.com/guttenbergovitz/vigil-cli)
+- [GitHub Repository](https://github.com/guttenbergovitz/angry-turnip)

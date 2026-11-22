@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // ScanJob represents a single package to scan

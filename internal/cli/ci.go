@@ -10,11 +10,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/export"
-	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
-	"github.com/guttenbergovitz/vigil-cli/internal/policy"
-	"github.com/guttenbergovitz/vigil-cli/internal/scan"
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/export"
+	"github.com/guttenbergovitz/angry-turnip/internal/lockfile"
+	"github.com/guttenbergovitz/angry-turnip/internal/policy"
+	"github.com/guttenbergovitz/angry-turnip/internal/scan"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // CIGateOptions configures the CI security gate evaluation.
@@ -111,8 +111,8 @@ func CI(args []string) error {
 	failOnUnsupported := fs.Bool("fail-on-unsupported", true, "Fail CI gate if any dependency has unresolved or unsupported metadata")
 	skipDevDeps := fs.Bool("skip-devdeps", false, "Skip development dependencies during scan")
 	customLockFile := fs.String("lockfile", "", "Explicitly specify lock file name (e.g. go.mod, package-lock.json)")
-	useCache := fs.Bool("use-cache", false, "Evaluate .vigil.cache instead of running a fresh scan (requires matching lock file hash and fresh timestamp)")
-	maxCacheAge := fs.Duration("max-cache-age", 24*time.Hour, "Maximum allowed age of .vigil.cache when --use-cache is enabled")
+	useCache := fs.Bool("use-cache", false, "Evaluate .atnp.cache (or legacy .vigil.cache) instead of running a fresh scan (requires matching lock file hash and fresh timestamp)")
+	maxCacheAge := fs.Duration("max-cache-age", 24*time.Hour, "Maximum allowed age of .atnp.cache when --use-cache is enabled")
 	policyPath := fs.String("policy", "", "Path to YAML policy-as-code file (overrides threshold flags)")
 	baselinePath := fs.String("baseline", "", "Path to baseline JSON file for delta evaluation")
 	format := fs.String("format", "text", "Output format (text, csv, markdown, json)")
@@ -189,7 +189,7 @@ func CI(args []string) error {
 
 	var result *types.ScanResult
 	if *useCache {
-		cachePath := filepath.Join(absPath, ".vigil.cache")
+		cachePath := lockfile.ResolveCachePath(absPath)
 		cached, err := lockfile.LoadCache(cachePath)
 		if err != nil {
 			return fmt.Errorf("load cache: %w", err)

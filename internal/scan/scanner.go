@@ -6,13 +6,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/epss"
-	"github.com/guttenbergovitz/vigil-cli/internal/github"
-	"github.com/guttenbergovitz/vigil-cli/internal/kev"
-	"github.com/guttenbergovitz/vigil-cli/internal/npm"
-	"github.com/guttenbergovitz/vigil-cli/internal/nvd"
-	"github.com/guttenbergovitz/vigil-cli/internal/osv"
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/epss"
+	"github.com/guttenbergovitz/angry-turnip/internal/github"
+	"github.com/guttenbergovitz/angry-turnip/internal/kev"
+	"github.com/guttenbergovitz/angry-turnip/internal/npm"
+	"github.com/guttenbergovitz/angry-turnip/internal/nvd"
+	"github.com/guttenbergovitz/angry-turnip/internal/osv"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // VulnerabilitySource queries an upstream advisory database for a package and version.

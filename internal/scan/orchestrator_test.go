@@ -6,18 +6,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/epss"
-	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/epss"
+	"github.com/guttenbergovitz/angry-turnip/internal/lockfile"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 type recordingReporter struct {
 	vulns []types.Vulnerability
 }
 
-func (r *recordingReporter) Error(string)                                        {}
-func (r *recordingReporter) Progress(int, int, string, int)                      {}
-func (r *recordingReporter) Done(*types.ScanResult)                              {}
+func (r *recordingReporter) Error(string)                   {}
+func (r *recordingReporter) Progress(int, int, string, int) {}
+func (r *recordingReporter) Done(*types.ScanResult)         {}
 func (r *recordingReporter) Vulnerability(v types.Vulnerability, _ string, _ []string) {
 	r.vulns = append(r.vulns, v)
 }

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
 )

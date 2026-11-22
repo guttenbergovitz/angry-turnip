@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
-	"github.com/guttenbergovitz/vigil-cli/internal/version"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/version"
 )
 
 // canonicalComponent represents a normalised component and its outgoing dependency keys
@@ -64,8 +64,8 @@ func GenerateCycloneDX(result *types.ScanResult, graph *types.DependencyGraph, w
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
 			"tools": []map[string]interface{}{
 				{
-					"vendor":  "Vigil Security",
-					"name":    "vigil-cli",
+					"vendor":  "Angry Turnip",
+					"name":    "atnp",
 					"version": toolVersion,
 				},
 			},
@@ -133,11 +133,11 @@ func GenerateSPDX(result *types.ScanResult, graph *types.DependencyGraph, w io.W
 		"dataLicense":       "CC0-1.0",
 		"SPDXID":            "SPDXRef-DOCUMENT",
 		"name":              projectName,
-		"documentNamespace": fmt.Sprintf("https://spdx.org/spdxdocs/vigil-%s-%s", sanitiseSPDXSegment(projectName), nsUUID),
+		"documentNamespace": fmt.Sprintf("https://spdx.org/spdxdocs/angry-turnip-%s-%s", sanitiseSPDXSegment(projectName), nsUUID),
 		"creationInfo": map[string]interface{}{
 			"created": time.Now().UTC().Format(time.RFC3339),
 			"creators": []string{
-				"Tool: vigil-cli-" + toolVersion,
+				"Tool: atnp-" + toolVersion,
 			},
 		},
 		"packages":      spdxPackages,

@@ -1,18 +1,18 @@
 # Troubleshooting
 
-Common issues and solutions.
+Common issues and solutions for Angry Turnip (`atnp`).
 
 ## Installation Issues
 
-### "vigil: command not found"
+### "atnp: command not found"
 
 **Cause**: Binary not in PATH.
 
 **Solution**:
 
 ```bash
-# Check where vigil is installed
-which vigil
+# Check where atnp is installed
+which atnp
 
 # If in ~/go/bin, add to PATH
 export PATH=$PATH:$(go env GOPATH)/bin
@@ -33,7 +33,7 @@ source ~/.bashrc
 go clean -modcache
 
 # Reinstall
-go install github.com/guttenbergovitz/vigil-cli/cmd/vigil@latest
+go install github.com/guttenbergovitz/angry-turnip/cmd/atnp@latest
 ```
 
 ### Build errors
@@ -46,7 +46,7 @@ go install github.com/guttenbergovitz/vigil-cli/cmd/vigil@latest
 # Check Go version
 go version
 
-# Ensure Go 1.24+
+# Ensure Go 1.27+
 # Update: https://go.dev/dl/
 ```
 
@@ -54,7 +54,7 @@ go version
 
 ### "No lock file found"
 
-**Cause**: Missing `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml`.
+**Cause**: Missing supported lock file or manifest.
 
 **Solution**:
 
@@ -106,7 +106,7 @@ echo $NVD_API_KEY
 **Alternative**: Skip dev dependencies to reduce scan time:
 
 ```bash
-vigil scan . --skip-devdeps
+atnp scan . --skip-devdeps
 ```
 
 ### "OSV API error: connection timeout"
@@ -134,7 +134,7 @@ curl -I https://api.osv.dev/v1
 # With key: 50 req/30s (fast)
 
 export NVD_API_KEY="your-key-here"
-vigil scan .
+atnp scan .
 ```
 
 ## Report Issues
@@ -147,10 +147,10 @@ vigil scan .
 
 ```bash
 # Run scan first
-vigil scan .
+atnp scan .
 
 # Then generate report
-vigil report
+atnp report
 ```
 
 ### Empty report output
@@ -161,13 +161,13 @@ vigil report
 
 ```bash
 # Check total vulns in cache
-jq '.total_vulns' .vigil.cache
+jq '.total_vulns' .atnp.cache
 
 # Remove filter
-vigil report  # without --filter flag
+atnp report  # without --filter flag
 
 # Try lower filter threshold
-vigil report --filter low
+atnp report --filter low
 ```
 
 ### "Invalid cache format"
@@ -178,13 +178,13 @@ vigil report --filter low
 
 ```bash
 # Delete cache and rescan
-rm .vigil.cache
-vigil scan .
+rm -f .atnp.cache .vigil.cache
+atnp scan .
 ```
 
 ## CI/CD Issues
 
-### CI fails with "vigil: not found"
+### CI fails with "atnp: not found"
 
 **Cause**: Binary not installed in CI environment.
 
@@ -192,8 +192,8 @@ vigil scan .
 
 ```yaml
 # GitHub Actions
-- name: Install Vigil
-  run: go install github.com/guttenbergovitz/vigil-cli/cmd/vigil@latest
+- name: Install Angry Turnip
+  run: go install github.com/guttenbergovitz/angry-turnip/cmd/atnp@latest
 
 - name: Add to PATH
   run: echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
@@ -209,8 +209,8 @@ vigil scan .
 # Cache scan results
 - uses: actions/cache@v4
   with:
-    path: .vigil.cache
-    key: vigil-${{ hashFiles('**/package-lock.json') }}
+    path: .atnp.cache
+    key: atnp-${{ hashFiles('**/package-lock.json') }}
 
 # Set API keys in secrets
 env:
@@ -226,8 +226,8 @@ env:
 
 ```bash
 # Skip dev deps in CI
-vigil scan . --skip-devdeps
-vigil ci --fail-on high
+atnp scan . --skip-devdeps --no-tui
+atnp ci --fail-on high --skip-devdeps
 ```
 
 ## Performance Issues
@@ -240,11 +240,11 @@ vigil ci --fail-on high
 
 ```bash
 # Monitor memory
-/usr/bin/time -v vigil scan .
+/usr/bin/time -v atnp scan . --no-tui
 
 # For very large projects, scan incrementally
-vigil scan ./packages/frontend
-vigil scan ./packages/backend
+atnp scan ./packages/frontend
+atnp scan ./packages/backend
 ```
 
 ### Slow GHSA queries
@@ -259,7 +259,7 @@ vigil scan ./packages/backend
 # Scope: public_repo (read-only)
 
 export GITHUB_TOKEN="ghp_your-token-here"
-vigil scan .
+atnp scan .
 ```
 
 ## Output Issues
@@ -271,9 +271,8 @@ vigil scan .
 **Solution**:
 
 ```bash
-# Disable interactive TUI (future feature)
-# Currently: redirect to file
-vigil scan . 2>&1 | tee scan.log
+# Disable interactive TUI
+atnp scan . --no-tui
 ```
 
 ### Unicode characters not rendering
@@ -287,7 +286,7 @@ vigil scan . 2>&1 | tee scan.log
 export LANG=en_GB.UTF-8
 export LC_ALL=en_GB.UTF-8
 
-vigil scan .
+atnp scan .
 ```
 
 ## Data Quality Issues
@@ -296,7 +295,7 @@ vigil scan .
 
 **Cause**: Vulnerability not in NVD/GitHub databases yet.
 
-**Expected**: Vigil derives CVSS from severity:
+**Expected**: Angry Turnip derives CVSS from severity when severity is known:
 - Critical: 9.5
 - High: 7.5
 - Medium: 5.0
@@ -314,7 +313,7 @@ Check CVSS vector for authoritative severity assessment.
 
 **Cause**: Same CVE reported with different IDs (CVE-* and GHSA-*).
 
-**Expected**: Both IDs reference same underlying vulnerability.
+**Expected**: Angry Turnip deduplicates overlapping advisories via transitive union-find in `internal/policy`.
 
 ## Platform-Specific Issues
 
@@ -324,10 +323,10 @@ Check CVSS vector for authoritative severity assessment.
 
 ```bash
 # Build from source instead
-git clone https://github.com/guttenbergovitz/vigil-cli
-cd vigil-cli
-go build -o vigil ./cmd/vigil
-./vigil version
+git clone https://github.com/guttenbergovitz/angry-turnip
+cd angry-turnip
+go build -o atnp ./cmd/atnp
+./atnp version
 ```
 
 ### Linux: Permission denied
@@ -336,10 +335,10 @@ go build -o vigil ./cmd/vigil
 
 ```bash
 # Make binary executable
-chmod +x vigil
+chmod +x atnp
 
 # Or install to user bin
-go install github.com/guttenbergovitz/vigil-cli/cmd/vigil@latest
+go install github.com/guttenbergovitz/angry-turnip/cmd/atnp@latest
 ```
 
 ### Windows: Path issues
@@ -351,7 +350,7 @@ go install github.com/guttenbergovitz/vigil-cli/cmd/vigil@latest
 $env:Path += ";$(go env GOPATH)\bin"
 
 # Or use full path
-& "$(go env GOPATH)\bin\vigil.exe" scan .
+& "$(go env GOPATH)\bin\atnp.exe" scan .
 ```
 
 ## Getting Help
@@ -360,10 +359,10 @@ Still stuck?
 
 1. Check [Commands Reference](commands.md)
 2. Review [Examples](../getting-started/examples.md)
-3. Open issue: https://github.com/guttenbergovitz/vigil-cli/issues
+3. Open issue: https://github.com/guttenbergovitz/angry-turnip/issues
 
 Include:
-- `vigil version` output
+- `atnp version` output
 - `go version` output
 - Full error message
 - Lock file type and size

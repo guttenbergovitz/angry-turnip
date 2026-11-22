@@ -1,5 +1,5 @@
 {
-  description = "Vigil CLI - Vulnerability scanner for JavaScript/TypeScript, Python, Rust, PHP, and Go projects";
+  description = "Angry Turnip (atnp) - Vulnerability scanner for JavaScript/TypeScript, Python, Rust, PHP, Go, and Java projects";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -16,7 +16,7 @@
       in
       {
         packages.default = pkgs.buildGoModule {
-          pname = "vigil";
+          pname = "atnp";
           version = version;
 
           src = ./.;
@@ -24,16 +24,16 @@
           vendorHash = "sha256-/w/xyWnf/+aOmicu6K9AelN4D5QIPN7+SYwXyJ1lBsM=";
 
           ldflags = [
-            "-X github.com/guttenbergovitz/vigil-cli/internal/version.Version=${version}"
-            "-X github.com/guttenbergovitz/vigil-cli/internal/version.Commit=${version}"
-            "-X github.com/guttenbergovitz/vigil-cli/internal/version.Date=1970-01-01T00:00:00Z"
+            "-X github.com/guttenbergovitz/angry-turnip/internal/version.Version=${version}"
+            "-X github.com/guttenbergovitz/angry-turnip/internal/version.Commit=${version}"
+            "-X github.com/guttenbergovitz/angry-turnip/internal/version.Date=1970-01-01T00:00:00Z"
           ];
 
-          subPackages = [ "cmd/vigil" ];
+          subPackages = [ "cmd/atnp" ];
 
           meta = with pkgs.lib; {
-            description = "Vulnerability scanner for JavaScript/TypeScript, Python, Rust, PHP, and Go projects";
-            homepage = "https://github.com/guttenbergovitz/vigil-cli";
+            description = "Angry Turnip (atnp) - Vulnerability scanner for JavaScript/TypeScript, Python, Rust, PHP, Go, and Java projects";
+            homepage = "https://github.com/guttenbergovitz/angry-turnip";
             license = licenses.mit;
             maintainers = [ ];
           };
@@ -48,7 +48,7 @@
           ];
 
           shellHook = ''
-            echo "Vigil development environment"
+            echo "Angry Turnip (atnp) development environment"
             echo "Go version: $(go version)"
             echo "Task version: $(task --version)"
           '';
@@ -57,7 +57,7 @@
         # Apps for nix run
         apps.default = {
           type = "app";
-          program = "${self.packages.${system}.default}/bin/vigil";
+          program = "${self.packages.${system}.default}/bin/atnp";
         };
       }
     );

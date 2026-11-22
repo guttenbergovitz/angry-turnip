@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
-	"github.com/guttenbergovitz/vigil-cli/internal/osv"
-	"github.com/guttenbergovitz/vigil-cli/internal/policy"
-	"github.com/guttenbergovitz/vigil-cli/internal/scan"
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/lockfile"
+	"github.com/guttenbergovitz/angry-turnip/internal/osv"
+	"github.com/guttenbergovitz/angry-turnip/internal/policy"
+	"github.com/guttenbergovitz/angry-turnip/internal/scan"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 type expectedComponent struct {
@@ -81,7 +81,7 @@ func TestReferenceFixturesResolutionAndCoverage(t *testing.T) {
 				t.Fatalf("parse expected.json: %v", err)
 			}
 
-			// Copy lock file into an isolated temporary workspace so .vigil.cache is never written to git tree.
+			// Copy lock file into an isolated temporary workspace so .atnp.cache is never written to git tree.
 			tmpDir := t.TempDir()
 			srcLock := filepath.Join(fixtureDir, expected.LockFile)
 			dstLock := filepath.Join(tmpDir, expected.LockFile)

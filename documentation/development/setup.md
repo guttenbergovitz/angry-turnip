@@ -9,8 +9,8 @@
 ### Initial Setup
 
 ```bash
-git clone <repo>
-cd vigil-cli
+git clone https://github.com/guttenbergovitz/angry-turnip
+cd angry-turnip
 go mod tidy
 ```
 
@@ -18,10 +18,10 @@ go mod tidy
 
 ```bash
 # Build binary
-go build -o vigil ./cmd/vigil
+go build -o atnp ./cmd/atnp
 
 # Or with specific output
-go build -o bin/vigil ./cmd/vigil
+go build -o bin/atnp ./cmd/atnp
 ```
 
 ## Testing
@@ -44,8 +44,8 @@ go test -v ./...
 
 ## Code Organization
 
-### cmd/vigil/
-Main entry point. Should contain only:
+### cmd/atnp/
+Main entry point (`cmd/vigil/` is retained as a deprecated compatibility wrapper). Should contain only:
 - Flag parsing
 - Input validation
 - Orchestration of internal packages
@@ -88,12 +88,12 @@ OSV API client.
 Report generation from scan cache.
 
 **Responsibilities:**
-- Load `.vigil.cache`
+- Load `.atnp.cache` (with fallback to `.vigil.cache`)
 - Filter vulnerabilities by severity, type
 - Pass formatted data to exporters
 
-### internal/config/
-Configuration file parsing (`.vigil.toml`).
+### internal/policy/
+Declarative policy evaluation (`atnp.yaml`), baseline snapshots (`.atnp.baseline.json`), and SARIF 2.1.0 generation.
 
 **Responsibilities:**
 - Read and unmarshal TOML
@@ -263,7 +263,7 @@ In `tests/` directory for end-to-end workflows:
 func TestFullScan(t *testing.T) {
     tmpdir := t.TempDir()
     // Copy test project
-    // Run vigil scan
+    // Run atnp scan
     // Verify output
 }
 ```

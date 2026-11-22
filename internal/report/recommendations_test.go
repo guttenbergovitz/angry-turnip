@@ -3,7 +3,7 @@ package report
 import (
 	"testing"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 func TestDetermineRecommendedAction(t *testing.T) {

@@ -3,8 +3,8 @@ package export
 import (
 	"io"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/sbom"
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/sbom"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // CycloneDX exports scan results in CycloneDX v1.5 JSON SBOM format.

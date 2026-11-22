@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // TestWorkerPoolNoDeadlock verifies that submitting more jobs than worker buffer size does not deadlock.

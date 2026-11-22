@@ -3,7 +3,7 @@ package license
 import (
 	"testing"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // TestClassifyLicense verifies license classification into Permissive vs Copyleft.

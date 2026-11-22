@@ -1,24 +1,26 @@
-# Vigil CLI
+# Angry Turnip (`atnp`)
 
-Lightweight vulnerability scanner for JavaScript/TypeScript, Python, Rust, PHP, Go, and Java projects.
+> **Note:** **Angry Turnip** (`atnp`) is the new product name and CLI executable for **Vigil CLI** (`vigil`). See [Migrating from Vigil CLI to Angry Turnip](#migrating-from-vigil-cli-to-angry-turnip) and [ADR-014](documentation/adr/014-rebrand-vigil-to-angry-turnip.md) for complete migration and compatibility details.
 
-Analyses dependency trees and reports CVE exposure with context, enriched CVSS scores, and detailed vulnerability information.
+Lightweight vulnerability scanner and explainable policy decision engine for JavaScript/TypeScript, Python, Rust, PHP, Go, and Java projects.
+
+Analyses dependency trees and reports CVE exposure with context, enriched CVSS scores, CISA KEV / FIRST EPSS threat intelligence, and auditable policy decisions.
 
 ## Quick Start
 
 ```bash
 # Install
-go install github.com/guttenbergovitz/vigil-cli/cmd/vigil@latest
+go install github.com/guttenbergovitz/angry-turnip/cmd/atnp@latest
 
 # Scan local project
-cd /path/to/your/node/project
-vigil scan .
+cd /path/to/your/project
+atnp scan .
 
 # Scan remote repository
-vigil scan https://github.com/user/repo
+atnp scan https://github.com/user/repo
 
 # View report
-vigil report
+atnp report
 ```
 
 ## Features
@@ -32,19 +34,20 @@ vigil report
 - **Full dependency chain tracking** - Shows complete vulnerability paths for all supported lock file types
 - **Explicit scan coverage & error reporting** - Tracks `scanned`, `failed`, `skipped`, and `unsupported` packages so API failures are never disguised as zero vulnerabilities
 - **Multi-source CVSS enrichment** - Aggregates scores from NVD, GitHub Security Advisories, and OSV
-- **Interactive DevSecOps TUI Dashboard** - Productivity-focused single-pane dashboard with 5 security domains (`[1-5]`), detail expansion (`[Enter]`), quick actions (`[y]` copy, `[x]` mark fixed), visual severity badges, search (`[/]`), and export formats (`[e]`). Smart default: Critical+High filter. See [TUI User Guide](documentation/user-guide/tui.md).
+- **Interactive DevSecOps TUI Assessment View** - Observable 9-stage scanning progress and interactive decision-first explorer with 5 security domains (`[1-5]`), Overview (`[o]`), Evidence (`[i]`), detail expansion (`[Enter]`), quick actions (`[y]` copy, `[x]` hide), search (`[/]`), and export formats (`[e]`). See [TUI User Guide](documentation/user-guide/tui.md).
 - **Comprehensive CVE data** - Titles, descriptions, publication dates, and dependency paths
 - **Multiple report formats**
   - **Table** (default): Compact Trivy-style tabular format with exploit classification
   - **Security**: Production-ready report for AppSec teams with executive summary
+  - **SARIF 2.1.0**: GitHub Code Scanning integration with diagnostic rules for incomplete or unverified evidence
   - **CycloneDX / SPDX**: Industry-standard SBOM export formats (JSON)
   - **Text**: Tree-structured detailed view
   - **CSV / Markdown / JSON**: Export formats for integration
 - **Evidence-based exploitability assessment** - Distinguishes `potentially_exploitable`, `unknown`, and `confirmed_not_affected` with explicit rationale instead of categorical assumptions
-- **Explainable security decisions (`vigil explain`)** - Explains why a vulnerability is `ALLOW`, `REVIEW`, or `BLOCK`, which policy rule matched, and what evidence is missing
-- **Baseline & delta analysis (`vigil baseline`)** - Tracks newly introduced, existing, and resolved vulnerabilities against an accepted baseline snapshot
-- **Policy as Code (`--policy`)** - Declarative YAML rules with owned, time-bounded exceptions (`expires_at`) enforced deterministically in `vigil ci`
-- **Fresh CI/CD security gate** - `vigil ci` runs a fresh scan by default and fails on incomplete scan coverage (`--fail-on-scan-error`)
+- **Explainable security decisions (`atnp explain`)** - Explains why a vulnerability is `ALLOW`, `REVIEW`, or `BLOCK`, which policy rule matched, and what evidence is missing
+- **Baseline & delta analysis (`atnp baseline`)** - Tracks newly introduced, existing, and resolved vulnerabilities against an accepted baseline snapshot
+- **Policy as Code (`--policy`)** - Declarative YAML rules with owned, time-bounded exceptions (`expires_at`) enforced deterministically in `atnp ci`
+- **Fresh CI/CD security gate** - `atnp ci` runs a fresh scan by default and fails on incomplete scan coverage (`--fail-on-scan-error`)
 
 ## Requirements
 
@@ -56,20 +59,20 @@ vigil report
 ### Option 1: go install (Recommended)
 
 ```bash
-go install github.com/guttenbergovitz/vigil-cli/cmd/vigil@latest
+go install github.com/guttenbergovitz/angry-turnip/cmd/atnp@latest
 ```
 
 ### Option 2: Docker
 
 ```bash
-docker pull guttenbergovitz/vigil:latest
-docker run --rm -v "$(pwd):/scan" guttenbergovitz/vigil:latest scan .
+docker pull guttenbergovitz/angry-turnip:latest
+docker run --rm -v "$(pwd):/scan" guttenbergovitz/angry-turnip:latest scan .
 ```
 
 ### Option 3: Nix
 
 ```bash
-nix run github:guttenbergovitz/vigil-cli -- scan .
+nix run github:guttenbergovitz/angry-turnip -- scan .
 ```
 
 ### Option 4: Build from Source
@@ -78,11 +81,11 @@ nix run github:guttenbergovitz/vigil-cli -- scan .
 # Install task runner (if not installed)
 go install github.com/go-task/task/v3/cmd/task@latest
 
-# Build vigil
-git clone https://github.com/guttenbergovitz/vigil-cli
-cd vigil-cli
+# Build atnp
+git clone https://github.com/guttenbergovitz/angry-turnip
+cd angry-turnip
 task build
-sudo mv vigil /usr/local/bin/
+sudo mv atnp /usr/local/bin/
 ```
 
 Taskfile injects version information at build time. See [Installation Guide](documentation/getting-started/installation.md) for details.
@@ -93,33 +96,33 @@ Taskfile injects version information at build time. See [Installation Guide](doc
 
 ```bash
 # Interactive TUI assessment (default when stdout is a terminal)
-vigil scan .
+atnp scan .
 
 # Non-interactive human summary (no TUI)
-vigil scan . --no-tui
+atnp scan . --no-tui
 
 # Machine-readable output on stdout (TUI automatically disabled)
-vigil scan . --output json
-vigil scan . --output sarif
-vigil scan . --output cyclonedx
-vigil scan . --output spdx
+atnp scan . --output json
+atnp scan . --output sarif
+atnp scan . --output cyclonedx
+atnp scan . --output spdx
 
 # Control scan scope: 'all' (SCA + Secrets + IaC + Licences) or 'sca' (SCA only)
-vigil scan . --scope sca
-vigil scan . --scope all
+atnp scan . --scope sca
+atnp scan . --scope all
 
 # Stream plain stage progress lines to stderr (clean stdout for piping/CI)
-vigil scan . --progress plain --no-tui
+atnp scan . --progress plain --no-tui
 
 # Exclude development dependencies or specify an explicit lockfile
-vigil scan . --skip-devdeps --lockfile uv.lock
+atnp scan . --skip-devdeps --lockfile uv.lock
 
 # Scan remote repository (GitHub, Bitbucket, GitLab)
-vigil scan https://github.com/user/repo
-vigil scan git@github.com:user/repo.git
+atnp scan https://github.com/user/repo
+atnp scan git@github.com:user/repo.git
 ```
 
-#### `vigil scan` CLI Flags
+#### `atnp scan` CLI Flags
 
 | Flag | Values / Default | Description |
 |------|------------------|-------------|
@@ -141,37 +144,37 @@ vigil scan git@github.com:user/repo.git
 
 ```bash
 # Default table format
-vigil report
+atnp report
 
 # Security format for AppSec teams
-vigil report --format security
+atnp report --format security
 
 # Export to file
-vigil report --format csv --export vulns.csv
+atnp report --format csv --export vulns.csv
 
 # Filter by severity
-vigil report --filter high
+atnp report --filter high
 ```
 
 ### CI/CD Integration
 
 ```bash
 # Fail build on high/critical vulnerabilities (fresh scan by default)
-vigil ci --fail-on high
+atnp ci --fail-on high
 
 # Enforce declarative YAML policy with baseline delta (text, JSON, or SARIF 2.1.0)
-vigil baseline .
-vigil ci --policy vigil.yaml --baseline .vigil.baseline.json --format sarif
+atnp baseline .
+atnp ci --policy atnp.yaml --baseline .atnp.baseline.json --format sarif
 
 # Explain why a specific vulnerability triggered ALLOW, REVIEW, or BLOCK
-vigil explain CVE-2026-0001 --policy vigil.yaml --baseline .vigil.baseline.json
+atnp explain CVE-2026-0001 --policy atnp.yaml --baseline .atnp.baseline.json
 ```
 
 See [Commands Reference](documentation/user-guide/commands.md) for all options and [Empirical Benchmark Results](benchmarks/reference/RESULTS.md) for side-by-side accuracy validation against Trivy across all six ecosystems.
 
 ## Environment Variables & API Keys
 
-Vigil works **out of the box without any API keys** using free public endpoints ([OSV.dev](https://osv.dev/), the public GitHub Security Advisories REST API, [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog), and [FIRST EPSS](https://www.first.org/epss/)).
+Angry Turnip works **out of the box without any API keys** using free public endpoints ([OSV.dev](https://osv.dev/), the public GitHub Security Advisories REST API, [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog), and [FIRST EPSS](https://www.first.org/epss/)).
 
 Both optional keys below are **100% free** and only improve enrichment coverage and rate limits:
 
@@ -179,7 +182,45 @@ Both optional keys below are **100% free** and only improve enrichment coverage 
 |----------|------|-----------------|-----------------------|
 | `NVD_API_KEY` | **Free** (email registration) | [NIST NVD API Key Request](https://nvd.nist.gov/developers/request-an-api-key) | Enables authoritative NVD CVE enrichment (50 req / 30s, globally rate-limited). Skipped when unset. |
 | `GITHUB_TOKEN` | **Free** (GitHub account) | [GitHub Personal Access Tokens](https://github.com/settings/tokens) (no scopes needed for public advisories; read-only `repo` scope only for private git cloning) | Switches GHSA lookups from public REST (60 req/hr) to GraphQL (5,000 req/hr) and authenticates private GitHub clones via `extraheader`. |
-| `VIGIL_WORKERS` | N/A | Local setting (`1`–`100`, default `10`) | Controls concurrent package scan worker count. |
+| `ATNP_WORKERS` | N/A | Local setting (`1`–`100`, default `10`; falls back to legacy `VIGIL_WORKERS`) | Controls concurrent package scan worker count. |
+
+## Migrating from Vigil CLI to Angry Turnip
+
+Angry Turnip (`atnp`) is a direct in-place rebrand of **Vigil CLI** (`vigil`). All core features, policy semantics, exit codes, and Git history are preserved.
+
+### Identity & Distribution Mapping
+
+| Item | Legacy (Vigil CLI) | Canonical (Angry Turnip) |
+|------|--------------------|--------------------------|
+| **Product Name** | Vigil / Vigil CLI | **Angry Turnip** |
+| **GitHub Repository** | `https://github.com/guttenbergovitz/vigil-cli` | `https://github.com/guttenbergovitz/angry-turnip` |
+| **CLI Executable** | `vigil` (`./cmd/vigil`) | **`atnp`** (`./cmd/atnp`) |
+| **Go Module Path** | `github.com/guttenbergovitz/vigil-cli` | `github.com/guttenbergovitz/angry-turnip` |
+| **Go Install Command** | `go install github.com/guttenbergovitz/vigil-cli/cmd/vigil@latest` | `go install github.com/guttenbergovitz/angry-turnip/cmd/atnp@latest` |
+| **Nix Flake Command** | `nix run github:guttenbergovitz/vigil-cli -- scan .` | `nix run github:guttenbergovitz/angry-turnip -- scan .` |
+| **Scan Cache File** | `.vigil.cache` | `.atnp.cache` (automatically falls back to `.vigil.cache` on read) |
+| **Default Baseline File** | `.vigil.baseline.json` | `.atnp.baseline.json` (`--baseline` accepts any file path) |
+| **Worker Concurrency Env** | `VIGIL_WORKERS` | `ATNP_WORKERS` (automatically falls back to `VIGIL_WORKERS` if unset) |
+| **SARIF Driver & Rule Prefix** | `driver.name: "Vigil"`, `VIGIL-*` | `driver.name: "Angry Turnip"`, `ATNP-*` |
+
+### Updating Local Installations & CI Scripts
+
+1. **Install the `atnp` binary**:
+   ```bash
+   go install github.com/guttenbergovitz/angry-turnip/cmd/atnp@latest
+   atnp version
+   ```
+2. **Replace `vigil` invocations with `atnp` in shell scripts and CI workflows**:
+   - `vigil scan .` → `atnp scan .`
+   - `vigil report` → `atnp report`
+   - `vigil ci` → `atnp ci`
+   - `vigil explain` → `atnp explain`
+   - `vigil baseline` → `atnp baseline`
+3. **Configuration, Cache, and Build Compatibility**:
+   - **Cache files**: `atnp scan` writes `.atnp.cache`. Commands that read cached results (`atnp report`, `atnp explain`, `atnp baseline`, `atnp ci --use-cache`) check `.atnp.cache` first and transparently fall back to `.vigil.cache` if `.atnp.cache` does not exist yet.
+   - **Policy & baseline files**: YAML policy schemas (`version: 1`) and baseline JSON schemas (`version: 1`) are 100% compatible; existing `vigil.yaml` and `.vigil.baseline.json` files work unmodified with `--policy` and `--baseline`.
+   - **Legacy `./cmd/vigil` build target**: `cmd/vigil/main.go` is retained as a thin compatibility entry point in the repository so legacy scripts building `./cmd/vigil` continue to compile, and the Docker image provides `/usr/local/bin/vigil` symlinked to `/usr/local/bin/atnp`.
+   - **Breaking changes to watch for**: Downstream tools that parse SARIF `tool.driver.name` (`"Angry Turnip"`), SARIF diagnostic rule IDs (`ATNP-SCAN-INCOMPLETE`, `ATNP-EVIDENCE-INVALID`, `ATNP-EVIDENCE-UNVERIFIED`, `ATNP-BASELINE-INCOMPATIBLE`, `ATNP-RESOLUTION-AMBIGUOUS`), or SBOM tool metadata (`vendor: "Angry Turnip"`, `name: "atnp"`) should update any hardcoded `"Vigil"` filters.
 
 ## Documentation
 
@@ -189,12 +230,14 @@ Both optional keys below are **100% free** and only improve enrichment coverage 
   - [Examples](documentation/getting-started/examples.md)
 - **User Guide**
   - [Commands Reference](documentation/user-guide/commands.md)
+  - [Interactive TUI Assessment View](documentation/user-guide/tui.md)
   - [Understanding Reports](documentation/user-guide/reports.md)
   - [Troubleshooting](documentation/user-guide/troubleshooting.md)
 - **Architecture**
   - [System Overview](documentation/architecture/overview.md)
   - [Components](documentation/architecture/components.md)
   - [Data Flow](documentation/architecture/data-flow.md)
+  - [ADR-014: Rebrand Vigil CLI as Angry Turnip](documentation/adr/014-rebrand-vigil-to-angry-turnip.md)
 - **Development**
   - [Setup](documentation/development/setup.md)
   - [Contributing](documentation/development/contributing.md)
@@ -206,37 +249,48 @@ Full documentation index: [documentation/README.md](documentation/README.md)
 
 ```
 .
-├── cmd/vigil/                  # CLI entry point
+├── cmd/
+│   ├── atnp/                   # Canonical CLI entry point (atnp)
+│   └── vigil/                  # Legacy compatibility entry point
 ├── internal/
 │   ├── cli/                    # Command implementations
+│   ├── container/              # Dockerfile & CI workflow auditor
+│   ├── epss/                   # FIRST EPSS threat-intelligence client
 │   ├── export/                 # Output format encoders
+│   ├── git/                    # Remote Git repository cloner
 │   ├── github/                 # GitHub Security Advisories client
+│   ├── kev/                    # CISA KEV catalogue client
+│   ├── license/                # Package licence compliance scanner
 │   ├── lockfile/               # Lock file parsers and caching
 │   ├── nvd/                    # NVD API client
 │   ├── osv/                    # OSV API client
+│   ├── policy/                 # Unified policy engine, baselines, and SARIF 2.1.0
 │   ├── report/                 # Report generation
-│   ├── scan/                   # Scan orchestration
+│   ├── sbom/                   # CycloneDX v1.5 and SPDX v2.3 SBOM generators
+│   ├── scan/                   # Scan orchestration and observable stage events
+│   ├── secrets/                # Regex + Shannon entropy secret scanner
 │   ├── types/                  # Core data structures
 │   └── ui/                     # Terminal UI (TUI)
+├── benchmarks/reference/       # Ground-truth reference fixtures & live scanner benchmark
 ├── documentation/
 │   ├── getting-started/        # Installation, quick start, examples
-│   ├── user-guide/             # Commands, reports, troubleshooting
+│   ├── user-guide/             # Commands, TUI, reports, troubleshooting
 │   ├── architecture/           # System design and components
 │   ├── development/            # Contributing and testing
-│   └── adr/                    # Architecture decision records
+│   └── adr/                    # Architecture decision records (ADR-001 to ADR-014)
 └── test-project/               # Test fixtures
 ```
 
 ## CVSS & Threat Intelligence Sources
 
-Vigil enriches CVSS scores from multiple sources in priority order:
+Angry Turnip enriches CVSS scores from multiple sources in priority order:
 
 1. **NVD API** (for `CVE-*` IDs, when `NVD_API_KEY` is configured) — authoritative CVE scores, globally rate-limited across concurrent workers
 2. **GitHub Security Advisories** (for `GHSA-*` IDs) — uses GraphQL when `GITHUB_TOKEN` is set, falling back to public REST API
 3. **OSV API** — baseline community-aggregated advisory data
 4. **Derived from known severity** — fallback approximation only when severity is explicitly known (`Unknown` severity retains CVSS `0.0` rather than fabricating a score)
 
-When CVEs are discovered, Vigil also runs a single best-effort, keyless threat-intelligence pass (zero requests on clean scans):
+When CVEs are discovered, Angry Turnip also runs a single best-effort, keyless threat-intelligence pass (zero requests on clean scans):
 
 - **CISA KEV** — flags vulnerabilities confirmed as actively exploited in the wild (`known_exploited: true`)
 - **FIRST EPSS** — attaches 30-day exploitation probability and percentile rank (`epss_score`, `epss_percentile`)

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // getFloat64FromMap safely extracts float64 value from map, returns 0 if key missing or wrong type.
@@ -42,8 +42,8 @@ func getStringFromMap(m map[string]any, key string) string {
 
 // Client provides access to OSV API.
 type Client struct {
-	endpoint string
-	timeout  int
+	endpoint   string
+	timeout    int
 	httpClient *http.Client
 }
 
@@ -76,13 +76,13 @@ type QueryRequest struct {
 // QueryResponse represents the OSV API response.
 type QueryResponse struct {
 	Vulns []struct {
-		ID        string   `json:"id"`
-		Aliases   []string `json:"aliases"`
-		Summary   string   `json:"summary"`
-		Details   string        `json:"details"`
-		Severity  interface{}   `json:"severity"` // Can be string, array, or object
-		Published string        `json:"published"`
-		Modified  string        `json:"modified"`
+		ID         string      `json:"id"`
+		Aliases    []string    `json:"aliases"`
+		Summary    string      `json:"summary"`
+		Details    string      `json:"details"`
+		Severity   interface{} `json:"severity"` // Can be string, array, or object
+		Published  string      `json:"published"`
+		Modified   string      `json:"modified"`
 		References []struct {
 			Type string `json:"type"`
 			URL  string `json:"url"`
@@ -90,10 +90,10 @@ type QueryResponse struct {
 		DatabaseSpecific interface{} `json:"database_specific"` // Contains CVSS info
 		// For NVD/CVE data
 		CVSSv3 *struct {
-			Score      float64 `json:"score"`
-			Vector     string  `json:"vectorString"`
-			BaseScore  float64 `json:"baseScore"`
-			BaseSeverity string `json:"baseSeverity"`
+			Score        float64 `json:"score"`
+			Vector       string  `json:"vectorString"`
+			BaseScore    float64 `json:"baseScore"`
+			BaseSeverity string  `json:"baseSeverity"`
 		} `json:"cvssv3"`
 		CVSSv2 *struct {
 			Score float64 `json:"score"`

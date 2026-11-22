@@ -5,16 +5,18 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/cli"
-	"github.com/guttenbergovitz/vigil-cli/internal/version"
+	"github.com/guttenbergovitz/angry-turnip/internal/cli"
+	"github.com/guttenbergovitz/angry-turnip/internal/version"
 )
 
+// Deprecated compatibility entry point for legacy scripts building ./cmd/vigil.
+// The canonical CLI executable for Angry Turnip is ./cmd/atnp (`atnp`).
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:]); err != nil {
 		var exitErr *cli.ExitError
 		if errors.As(err, &exitErr) {
 			if exitErr.Message != "" {
-				fmt.Fprintf(os.Stderr, "error: %s\n", exitErr.Message)
+				fmt.Fprintln(os.Stderr, exitErr.Message)
 			}
 			os.Exit(exitErr.Code)
 		}
@@ -23,26 +25,27 @@ func main() {
 	}
 }
 
-func run() error {
-	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: vigil <scan|report|ci|explain|baseline|version> [args]")
+func run(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: atnp <scan|report|ci|explain|baseline|version> [args]")
 	}
 
-	cmd := os.Args[1]
+	cmd := args[0]
+	cmdArgs := args[1:]
 
 	switch cmd {
 	case "scan":
-		return cli.Scan(os.Args[2:])
+		return cli.Scan(cmdArgs)
 	case "report":
-		return cli.Report(os.Args[2:])
+		return cli.Report(cmdArgs)
 	case "ci":
-		return cli.CI(os.Args[2:])
+		return cli.CI(cmdArgs)
 	case "explain":
-		return cli.Explain(os.Args[2:])
+		return cli.Explain(cmdArgs)
 	case "baseline":
-		return cli.Baseline(os.Args[2:])
+		return cli.Baseline(cmdArgs)
 	case "version":
-		fmt.Printf("vigil %s\n", version.GetFull())
+		fmt.Printf("atnp %s\n", version.GetFull())
 		return nil
 	default:
 		return fmt.Errorf("unknown command: %s", cmd)

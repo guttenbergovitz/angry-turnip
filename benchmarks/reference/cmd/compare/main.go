@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
-	"github.com/guttenbergovitz/vigil-cli/internal/policy"
-	"github.com/guttenbergovitz/vigil-cli/internal/scan"
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/lockfile"
+	"github.com/guttenbergovitz/angry-turnip/internal/policy"
+	"github.com/guttenbergovitz/angry-turnip/internal/scan"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 type expectedCVE struct {
@@ -38,7 +38,7 @@ type scannerRun struct {
 func main() {
 	ecosystems := []string{"npm", "go", "maven", "python", "cargo", "composer"}
 
-	fmt.Printf("%-10s | %-24s | %-24s | %-24s | %-24s\n", "Ecosystem", "Vigil (status/rec)", "OSV-Scanner (status/rec)", "Trivy (status/rec)", "Grype (status/rec)")
+	fmt.Printf("%-10s | %-24s | %-24s | %-24s | %-24s\n", "Ecosystem", "Angry Turnip (status/rec)", "OSV-Scanner (status/rec)", "Trivy (status/rec)", "Grype (status/rec)")
 	fmt.Println(strings.Repeat("-", 120))
 
 	for _, eco := range ecosystems {
@@ -63,17 +63,17 @@ func main() {
 			expectedNeg[strings.ToUpper(item.CVE)+"|"+item.PURL] = true
 		}
 
-		vigilRun := runVigil(fixtureDir)
+		atnpRun := runAngryTurnip(fixtureDir)
 		osvRun := runOSVScanner(fixtureDir, types.Ecosystem(exp.Ecosystem))
 		trivyRun := runTrivy(fixtureDir, types.Ecosystem(exp.Ecosystem))
 		grypeRun := runGrype(fixtureDir, types.Ecosystem(exp.Ecosystem))
 
 		fmt.Printf("%-10s | %-24s | %-24s | %-24s | %-24s\n",
 			eco,
-			formatScore(vigilRun, expectedPos, expectedNeg),
-			formatScoreWithOverlap(osvRun, vigilRun, expectedPos, expectedNeg),
-			formatScoreWithOverlap(trivyRun, vigilRun, expectedPos, expectedNeg),
-			formatScoreWithOverlap(grypeRun, vigilRun, expectedPos, expectedNeg),
+			formatScore(atnpRun, expectedPos, expectedNeg),
+			formatScoreWithOverlap(osvRun, atnpRun, expectedPos, expectedNeg),
+			formatScoreWithOverlap(trivyRun, atnpRun, expectedPos, expectedNeg),
+			formatScoreWithOverlap(grypeRun, atnpRun, expectedPos, expectedNeg),
 		)
 	}
 }
@@ -109,13 +109,13 @@ func formatScore(run scannerRun, expectedPos, expectedNeg map[string]bool) strin
 	return fmt.Sprintf("%s (rec %d/%d, lbl-prec %d%%, unlbl %d, tot %d)", run.Status, tp, len(expectedPos), lblPrecPct, unlabelled, tot)
 }
 
-func formatScoreWithOverlap(run, vigilRun scannerRun, expectedPos, expectedNeg map[string]bool) string {
+func formatScoreWithOverlap(run, atnpRun scannerRun, expectedPos, expectedNeg map[string]bool) string {
 	base := formatScore(run, expectedPos, expectedNeg)
-	if !strings.HasPrefix(run.Status, "OK") || !strings.HasPrefix(vigilRun.Status, "OK") {
+	if !strings.HasPrefix(run.Status, "OK") || !strings.HasPrefix(atnpRun.Status, "OK") {
 		return base
 	}
 	shared := 0
-	for k := range vigilRun.CanonicalKeys {
+	for k := range atnpRun.CanonicalKeys {
 		if run.Findings[k] {
 			shared++
 		}
@@ -123,8 +123,8 @@ func formatScoreWithOverlap(run, vigilRun scannerRun, expectedPos, expectedNeg m
 	return fmt.Sprintf("%s [shared:%d]", base, shared)
 }
 
-func runVigil(fixtureDir string) scannerRun {
-	tmpDir, err := os.MkdirTemp("", "vigil-bench-*")
+func runAngryTurnip(fixtureDir string) scannerRun {
+	tmpDir, err := os.MkdirTemp("", "atnp-bench-*")
 	if err != nil {
 		return scannerRun{Status: "FAILED"}
 	}

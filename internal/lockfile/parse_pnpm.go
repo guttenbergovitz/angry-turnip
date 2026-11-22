@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 	"gopkg.in/yaml.v3"
 )
 

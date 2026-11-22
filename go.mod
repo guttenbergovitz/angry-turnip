@@ -1,4 +1,4 @@
-module github.com/guttenbergovitz/vigil-cli
+module github.com/guttenbergovitz/angry-turnip
 
 go 1.27.0
 

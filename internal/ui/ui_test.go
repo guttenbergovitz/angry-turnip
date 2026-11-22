@@ -5,10 +5,10 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/guttenbergovitz/vigil-cli/internal/container"
-	"github.com/guttenbergovitz/vigil-cli/internal/license"
-	"github.com/guttenbergovitz/vigil-cli/internal/secrets"
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/container"
+	"github.com/guttenbergovitz/angry-turnip/internal/license"
+	"github.com/guttenbergovitz/angry-turnip/internal/secrets"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // TestModelInitialState verifies initial TUI model state.

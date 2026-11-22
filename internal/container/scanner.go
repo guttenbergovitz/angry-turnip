@@ -29,8 +29,8 @@ type SecurityIssue struct {
 }
 
 var (
-	shaRegex        = regexp.MustCompile(`@[a-f0-9]{40}$`)
-	actionTagRegex  = regexp.MustCompile(`uses:\s*([a-zA-Z0-9_\-\./]+)@([a-zA-Z0-9_\-\.]+)`)
+	shaRegex       = regexp.MustCompile(`@[a-f0-9]{40}$`)
+	actionTagRegex = regexp.MustCompile(`uses:\s*([a-zA-Z0-9_\-\./]+)@([a-zA-Z0-9_\-\.]+)`)
 )
 
 // AuditDockerfile audits Dockerfile for security misconfigurations.

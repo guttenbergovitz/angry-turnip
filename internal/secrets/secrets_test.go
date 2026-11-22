@@ -13,10 +13,10 @@ func TestCalculateShannonEntropy(t *testing.T) {
 		minScore float64
 		maxScore float64
 	}{
-		{"aaaaa", 0.0, 0.1},                                     // Low entropy (single char)
-		{"abcdef1234567890", 3.8, 4.2},                          // Medium-high entropy
-		{"8f95e87d7174a6b5c3ea96c31dd2c3ea96c", 3.5, 4.5},       // High entropy hash
-		{"AKIAIOSFODNN7EXAMPLE", 3.2, 4.0},                      // AWS Key example
+		{"aaaaa", 0.0, 0.1},                               // Low entropy (single char)
+		{"abcdef1234567890", 3.8, 4.2},                    // Medium-high entropy
+		{"8f95e87d7174a6b5c3ea96c31dd2c3ea96c", 3.5, 4.5}, // High entropy hash
+		{"AKIAIOSFODNN7EXAMPLE", 3.2, 4.0},                // AWS Key example
 	}
 
 	for _, tt := range tests {

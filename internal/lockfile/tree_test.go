@@ -3,7 +3,7 @@ package lockfile
 import (
 	"testing"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 func TestBuildDependencyTree(t *testing.T) {
@@ -38,7 +38,7 @@ func TestBuildDependencyTree(t *testing.T) {
 					"lodash":  "4.17.21",
 				},
 				Development: map[string]string{
-					"jest":      "29.0.0",
+					"jest":       "29.0.0",
 					"typescript": "5.0.0",
 				},
 			},

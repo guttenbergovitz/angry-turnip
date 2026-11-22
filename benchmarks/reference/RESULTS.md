@@ -1,4 +1,4 @@
-# Reference Fixture Benchmark Results: Vigil vs Trivy
+# Reference Fixture Benchmark Results: Angry Turnip vs Trivy
 
 Executed on **2026-11-22** via `go run ./benchmarks/reference/cmd/compare` against the six controlled reference fixtures in `benchmarks/reference/`.
 
@@ -16,11 +16,11 @@ Executed on **2026-11-22** via `go run ./benchmarks/reference/cmd/compare` again
 
 ## Live Results on Reference Fixtures
 
-| Ecosystem | Lock File & `ResolutionScope` | Vigil (`status / recall / total`) | Trivy (`status / recall / total`) | Analysis |
+| Ecosystem | Lock File & `ResolutionScope` | Angry Turnip (`status / recall / total`) | Trivy (`status / recall / total`) | Analysis |
 |-----------|-------------------------------|-----------------------------------|-----------------------------------|----------|
 | **npm** | `package-lock.json` (`full-lockfile`) | `OK(COMPLETE)` — **rec 2/2**, tot **11** | `OK` — **rec 2/2**, tot **11** | Identical 11-finding set on this fixture and 2/2 ground-truth recall (`CVE-2021-23337`, `CVE-2023-45133`). |
 | **go** | `go.mod` (`go-mod-manifest`) | `OK(COMPLETE)` — **rec 1/1**, tot **24** | `OK` — **rec 1/1**, tot **24** | Both honour `replace golang.org/x/net v0.17.0 => v0.18.0` and report the same 24 findings (`CVE-2023-45288`) on this `go.mod` fixture. |
-| **maven** | `pom.xml` (`partial-pom`) | `OK(PARTIAL)` — **rec 1/1**, tot **21** | `OK` — **rec 1/1**, tot **25** | Both detect `CVE-2021-44228`. Vigil merges 4 overlapping GHSA/CVE aliases via union-find (21 canonical findings vs 25 raw records) and **explicitly flags `PARTIAL` evidence** (with `resolution_scope: partial-pom`) because `spring-boot-starter-web` lacks a locally resolvable version. |
-| **python** | `uv.lock` (`full-lockfile`) | `OK(COMPLETE)` — **rec 1/1**, tot **18** | `OK` — **rec 0/1**, tot **0** | Difference reflects input format support: Vigil natively parses `uv.lock` (`18` findings including `CVE-2021-33503`), whereas Trivy did not ingest `uv.lock` in this run. |
-| **cargo** | `Cargo.lock` (`full-lockfile`) | `OK(COMPLETE)` — **rec 1/1**, tot **9** | `OK` — **rec 1/1**, tot **6** | Both detect `CVE-2021-45710`; the +3 difference on Vigil comes from unaliased `RUSTSEC-*` advisories in OSV.dev for `smallvec@1.6.0` and `tokio@1.8.0`. |
+| **maven** | `pom.xml` (`partial-pom`) | `OK(PARTIAL)` — **rec 1/1**, tot **21** | `OK` — **rec 1/1**, tot **25** | Both detect `CVE-2021-44228`. Angry Turnip merges 4 overlapping GHSA/CVE aliases via union-find (21 canonical findings vs 25 raw records) and **explicitly flags `PARTIAL` evidence** (with `resolution_scope: partial-pom`) because `spring-boot-starter-web` lacks a locally resolvable version. |
+| **python** | `uv.lock` (`full-lockfile`) | `OK(COMPLETE)` — **rec 1/1**, tot **18** | `OK` — **rec 0/1**, tot **0** | Difference reflects input format support: Angry Turnip natively parses `uv.lock` (`18` findings including `CVE-2021-33503`), whereas Trivy did not ingest `uv.lock` in this run. |
+| **cargo** | `Cargo.lock` (`full-lockfile`) | `OK(COMPLETE)` — **rec 1/1**, tot **9** | `OK` — **rec 1/1**, tot **6** | Both detect `CVE-2021-45710`; the +3 difference on Angry Turnip comes from unaliased `RUSTSEC-*` advisories in OSV.dev for `smallvec@1.6.0` and `tokio@1.8.0`. |
 | **composer** | `composer.lock` (`full-lockfile`) | `OK(COMPLETE)` — **rec 1/1**, tot **14** | `OK` — **rec 1/1**, tot **14** | Identical 14-finding set on this fixture and 1/1 ground-truth recall (`CVE-2022-31042`). |

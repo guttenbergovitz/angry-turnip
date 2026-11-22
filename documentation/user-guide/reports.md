@@ -1,6 +1,6 @@
 # Understanding Reports
 
-Guide to interpreting Vigil output.
+Guide to interpreting Angry Turnip (`atnp`) output.
 
 ## Severity Levels
 
@@ -47,7 +47,7 @@ Guide to interpreting Vigil output.
 
 ## Exploitability Assessment
 
-Static lock file analysis cannot prove runtime reachability or deployment exposure on its own. Vigil therefore reports evidence-based exploitability states with explicit rationale rather than categorical `yes`/`no` claims:
+Static lock file analysis cannot prove runtime reachability or deployment exposure on its own. Angry Turnip therefore reports evidence-based exploitability states with explicit rationale rather than categorical `yes`/`no` claims:
 
 **potentially_exploitable**
 - Advisory signals (such as CVSS `AV:N` network attack vector or `AC:L` low attack complexity) indicate potential exposure
@@ -154,7 +154,7 @@ Higher severity when:
 
 ## CVSS Score Sources
 
-Vigil enriches CVSS from multiple authoritative sources:
+Angry Turnip enriches CVSS from multiple authoritative sources:
 
 1. **NVD API** (CVE-* IDs) - Most authoritative for CVEs
 2. **GitHub Security Advisories** (GHSA-* IDs) - Comprehensive GHSA data
@@ -165,7 +165,7 @@ Source priority ensures accurate risk assessment.
 
 ## Temporal Metadata
 
-Package release dates and advisory publication dates are retained strictly as informational metadata. Vigil does **not** filter or discard vulnerabilities published before a package release date, because an unpatched vulnerability disclosed prior to a release can still affect subsequent releases until fixed.
+Package release dates and advisory publication dates are retained strictly as informational metadata. Angry Turnip does **not** filter or discard vulnerabilities published before a package release date, because an unpatched vulnerability disclosed prior to a release can still affect subsequent releases until fixed.
 
 ## Production vs Development Dependencies
 
@@ -182,7 +182,7 @@ Use `--skip-devdeps` to exclude development-scoped dependencies.
 
 ## Risk Scoring
 
-Vigil calculates 0-100 risk score based on:
+Angry Turnip calculates 0-100 risk score based on:
 
 - **Base**: CVSS severity score
 - **+20**: Production dependency

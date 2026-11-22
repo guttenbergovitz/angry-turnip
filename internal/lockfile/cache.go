@@ -8,15 +8,37 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
-// SaveCache atomically writes scan results to the cache file (.vigil.cache) using a
+const (
+	// DefaultCacheFileName is the canonical scan cache file written by Angry Turnip (`atnp`).
+	DefaultCacheFileName = ".atnp.cache"
+	// LegacyCacheFileName is the legacy Vigil CLI cache file supported as a read fallback.
+	LegacyCacheFileName = ".vigil.cache"
+)
+
+// ResolveCachePath returns the path to the scan cache file in dir, preferring the canonical
+// .atnp.cache file and falling back to a pre-existing .vigil.cache file when .atnp.cache does
+// not yet exist on disk.
+func ResolveCachePath(dir string) string {
+	primary := filepath.Join(dir, DefaultCacheFileName)
+	if _, err := os.Stat(primary); err == nil {
+		return primary
+	}
+	legacy := filepath.Join(dir, LegacyCacheFileName)
+	if _, err := os.Stat(legacy); err == nil {
+		return legacy
+	}
+	return primary
+}
+
+// SaveCache atomically writes scan results to the cache file (.atnp.cache) using a
 // temporary file in the same directory followed by os.Rename so an interrupted process
 // never leaves a partially written or corrupted snapshot.
 func SaveCache(path string, result *types.ScanResult) error {
 	dir := filepath.Dir(path)
-	tmpFile, err := os.CreateTemp(dir, ".vigil.cache.*.tmp")
+	tmpFile, err := os.CreateTemp(dir, ".atnp.cache.*.tmp")
 	if err != nil {
 		return fmt.Errorf("create temp cache file: %w", err)
 	}

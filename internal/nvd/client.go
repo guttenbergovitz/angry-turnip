@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // Client provides access to NVD API for CVE data
@@ -33,8 +33,8 @@ func New(endpoint, apiKey string, timeout int) *Client {
 type QueryResponse struct {
 	Vulnerabilities []struct {
 		CVE struct {
-			ID          string `json:"id"`
-			Published   string `json:"published"`
+			ID           string `json:"id"`
+			Published    string `json:"published"`
 			LastModified string `json:"lastModified"`
 			Descriptions []struct {
 				Value string `json:"value"`
@@ -188,7 +188,7 @@ func (c *Client) QueryCVE(cveID string) (*types.Vulnerability, error) {
 				// Extract first sentence or first 80 chars as short title
 				fullText := desc.Value
 				description = fullText
-				
+
 				// Try to find first sentence (ends with . ! or ?)
 				sentenceEnd := -1
 				for i, r := range fullText {
@@ -199,7 +199,7 @@ func (c *Client) QueryCVE(cveID string) (*types.Vulnerability, error) {
 						}
 					}
 				}
-				
+
 				if sentenceEnd > 0 && sentenceEnd <= 120 {
 					title = fullText[:sentenceEnd]
 				} else {
@@ -218,7 +218,7 @@ func (c *Client) QueryCVE(cveID string) (*types.Vulnerability, error) {
 	if title == "" && len(vuln.CVE.Descriptions) > 0 {
 		fullText := vuln.CVE.Descriptions[0].Value
 		description = fullText
-		
+
 		// Extract first sentence
 		sentenceEnd := -1
 		for i, r := range fullText {
@@ -229,7 +229,7 @@ func (c *Client) QueryCVE(cveID string) (*types.Vulnerability, error) {
 				}
 			}
 		}
-		
+
 		if sentenceEnd > 0 && sentenceEnd <= 120 {
 			title = fullText[:sentenceEnd]
 		} else {
@@ -245,7 +245,7 @@ func (c *Client) QueryCVE(cveID string) (*types.Vulnerability, error) {
 	cvssScore := 0.0
 	var cvssVector string
 	severity := types.Low
-	
+
 	// Try CVSS v3.1 first
 	if len(vuln.CVE.Metrics.CVSSMetricV31) > 0 {
 		cvssData := vuln.CVE.Metrics.CVSSMetricV31[0].CVSSData
@@ -280,18 +280,18 @@ func (c *Client) QueryCVE(cveID string) (*types.Vulnerability, error) {
 	}
 
 	return &types.Vulnerability{
-		ID:            vuln.CVE.ID,
-		CVEID:         vuln.CVE.ID,
-		Summary:       title,
-		Description:   description,
-		CVETitle:      title,
+		ID:             vuln.CVE.ID,
+		CVEID:          vuln.CVE.ID,
+		Summary:        title,
+		Description:    description,
+		CVETitle:       title,
 		CVEDescription: description,
-		Severity:      severity,
-		CVESeverity:   severity,
-		CVSSScore:     cvssScore,
-		CVSSVector:    cvssVector,
-		PublishedAt:   published,
-		Sources:       []string{"nvd", "mitre"},
+		Severity:       severity,
+		CVESeverity:    severity,
+		CVSSScore:      cvssScore,
+		CVSSVector:     cvssVector,
+		PublishedAt:    published,
+		Sources:        []string{"nvd", "mitre"},
 	}, nil
 }
 

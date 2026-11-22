@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.24+ (`go version` to check)
+- Go 1.27+ (`go version` to check)
 - Git (for source installation)
 
 ## Option 1: go install (Recommended)
@@ -10,7 +10,7 @@
 Install latest release directly from source:
 
 ```bash
-go install github.com/guttenbergovitz/vigil-cli/cmd/vigil@latest
+go install github.com/guttenbergovitz/angry-turnip/cmd/atnp@latest
 ```
 
 Binary installed to `$GOPATH/bin` (typically `~/go/bin`).
@@ -18,7 +18,7 @@ Binary installed to `$GOPATH/bin` (typically `~/go/bin`).
 Verify installation:
 
 ```bash
-vigil version
+atnp version
 ```
 
 ## Option 2: Build from Source
@@ -32,14 +32,14 @@ go install github.com/go-task/task/v3/cmd/task@latest
 Clone and build:
 
 ```bash
-git clone https://github.com/guttenbergovitz/vigil-cli
-cd vigil-cli
+git clone https://github.com/guttenbergovitz/angry-turnip
+cd angry-turnip
 
 # Build with version info using Taskfile (recommended)
 task build
 
 # Or build directly (no version injection)
-go build -o vigil ./cmd/vigil
+go build -o atnp ./cmd/atnp
 ```
 
 Taskfile automatically injects version, commit hash, and build date:
@@ -58,10 +58,10 @@ Move to PATH:
 
 ```bash
 # macOS/Linux
-sudo mv vigil /usr/local/bin/
+sudo mv atnp /usr/local/bin/
 
 # or use without install
-./vigil scan .
+./atnp scan .
 ```
 
 ## Option 3: Docker Container
@@ -70,30 +70,30 @@ Run without installing Go or language runtimes:
 
 ```bash
 # Pull from DockerHub
-docker pull guttenbergovitz/vigil:latest
+docker pull guttenbergovitz/angry-turnip:latest
 
 # Scan local directory (JS/TS, Python, Rust, PHP, Go, Java)
-docker run --rm -v "$(pwd):/scan" guttenbergovitz/vigil:latest scan .
+docker run --rm -v "$(pwd):/scan" guttenbergovitz/angry-turnip:latest scan .
 
 # Scan specific lockfile in polyglot repo
-docker run --rm -v "$(pwd):/scan" guttenbergovitz/vigil:latest scan . --lockfile uv.lock
+docker run --rm -v "$(pwd):/scan" guttenbergovitz/angry-turnip:latest scan . --lockfile uv.lock
 
 # With API keys for better rate limits
 docker run --rm \
   -v "$(pwd):/scan" \
   -e NVD_API_KEY="${NVD_API_KEY}" \
   -e GITHUB_TOKEN="${GITHUB_TOKEN}" \
-  guttenbergovitz/vigil:latest scan .
+  guttenbergovitz/angry-turnip:latest scan .
 
 # Check version
-docker run --rm guttenbergovitz/vigil:latest version
+docker run --rm guttenbergovitz/angry-turnip:latest version
 ```
 
 **Build locally**:
 
 ```bash
 task docker-build
-docker run --rm -v "$(pwd):/scan" vigil:latest scan .
+docker run --rm -v "$(pwd):/scan" angry-turnip:latest scan .
 ```
 
 **Environment variables**:
@@ -106,13 +106,13 @@ For Nix users:
 
 ```bash
 # Run directly from GitHub
-nix run github:guttenbergovitz/vigil-cli -- scan .
+nix run github:guttenbergovitz/angry-turnip -- scan .
 
 # Build locally
-git clone https://github.com/guttenbergovitz/vigil-cli
-cd vigil-cli
+git clone https://github.com/guttenbergovitz/angry-turnip
+cd angry-turnip
 nix build
-./result/bin/vigil version
+./result/bin/atnp version
 
 # Development shell with all tools
 nix develop
@@ -125,10 +125,10 @@ Nix provides reproducible, declarative builds with zero configuration.
 For contributing or testing unreleased features:
 
 ```bash
-git clone https://github.com/guttenbergovitz/vigil-cli
-cd vigil-cli
+git clone https://github.com/guttenbergovitz/angry-turnip
+cd angry-turnip
 go mod tidy
-go build -o vigil ./cmd/vigil
+go build -o atnp ./cmd/atnp
 ```
 
 See [Development Setup](../development/setup.md) for full development environment.
@@ -162,8 +162,8 @@ export GITHUB_TOKEN="ghp_your-token-here"
 Run first scan:
 
 ```bash
-cd /path/to/your/node/project
-vigil scan .
+cd /path/to/your/project
+atnp scan .
 ```
 
 Should display interactive TUI with scan progress.
@@ -172,23 +172,23 @@ Should display interactive TUI with scan progress.
 
 ```bash
 # go install method
-rm $(which vigil)
+rm $(which atnp)
 
 # manual install
-sudo rm /usr/local/bin/vigil
+sudo rm /usr/local/bin/atnp
 ```
 
 ## Troubleshooting
 
-**"vigil: command not found":**
+**"atnp: command not found":**
 - Add `$GOPATH/bin` to PATH: `export PATH=$PATH:$(go env GOPATH)/bin`
-- Or use absolute path: `~/go/bin/vigil`
+- Or use absolute path: `~/go/bin/atnp`
 
 **"missing go.sum entry":**
 - Run `go mod tidy` in project directory
 
 **Build errors:**
-- Ensure Go 1.24+: `go version`
+- Ensure Go 1.27+: `go version`
 - Update dependencies: `go get -u ./...`
 
 See [Troubleshooting Guide](../user-guide/troubleshooting.md) for more issues.

@@ -15,12 +15,12 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/guttenbergovitz/vigil-cli/internal/container"
-	"github.com/guttenbergovitz/vigil-cli/internal/export"
-	"github.com/guttenbergovitz/vigil-cli/internal/license"
-	"github.com/guttenbergovitz/vigil-cli/internal/policy"
-	"github.com/guttenbergovitz/vigil-cli/internal/secrets"
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/container"
+	"github.com/guttenbergovitz/angry-turnip/internal/export"
+	"github.com/guttenbergovitz/angry-turnip/internal/license"
+	"github.com/guttenbergovitz/angry-turnip/internal/policy"
+	"github.com/guttenbergovitz/angry-turnip/internal/secrets"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // ViewState represents screen mode.
@@ -64,7 +64,7 @@ type VulnEntry struct {
 	DependencyPath []string
 }
 
-// Model represents the Vigil Security Assessment TUI state.
+// Model represents the Angry Turnip Security Assessment TUI state.
 type Model struct {
 	activeTab           ActiveTab
 	activePane          ActivePane
@@ -1173,7 +1173,7 @@ func (m *Model) executeExport(fmtName string) tea.Cmd {
 			ext = "sarif.json"
 		}
 
-		fileName := fmt.Sprintf("vigil-export-%d.%s", time.Now().Unix(), ext)
+		fileName := fmt.Sprintf("atnp-export-%d.%s", time.Now().Unix(), ext)
 		file, err := os.Create(fileName)
 		if err != nil {
 			return ExportDoneMsg{Err: fmt.Errorf("create export file: %w", err)}
@@ -1255,7 +1255,7 @@ func (m *Model) renderExplorer() string {
 	if m.result != nil && m.result.Coverage.TotalPackages > 0 {
 		covText = fmt.Sprintf("Coverage: %d/%d", m.result.Coverage.ScannedPackages, m.result.Coverage.TotalPackages)
 	}
-	headerText := fmt.Sprintf("VIGIL / ASSESSMENT | %s | %s%s | %s",
+	headerText := fmt.Sprintf("ANGRY TURNIP / ASSESSMENT | %s | %s%s | %s",
 		decisionText, evidenceText, resText, covText)
 	sections = append(sections, m.styles.Header.Render(truncateRunes(headerText, availWidth)))
 
@@ -1389,7 +1389,7 @@ func (m *Model) renderFooter(availWidth int) string {
 
 func (m *Model) renderExportModal() string {
 	var b strings.Builder
-	b.WriteString(m.styles.Title.Render("VIGIL EXPORT REPORT") + "\n\n")
+	b.WriteString(m.styles.Title.Render("ANGRY TURNIP EXPORT REPORT") + "\n\n")
 	b.WriteString("Select export format:\n\n")
 	b.WriteString("  [1] JSON Report (.json)\n")
 	b.WriteString("  [2] CSV Spreadsheet (.csv)\n")
@@ -1404,7 +1404,7 @@ func (m *Model) renderExportModal() string {
 
 func (m *Model) renderHelp() string {
 	var b strings.Builder
-	b.WriteString(m.styles.Title.Render("VIGIL KEYBOARD SHORTCUTS") + "\n\n")
+	b.WriteString(m.styles.Title.Render("ANGRY TURNIP KEYBOARD SHORTCUTS") + "\n\n")
 
 	b.WriteString(m.styles.Subtitle.Render("Navigation & Views:") + "\n")
 	b.WriteString("  j/k or ↓/↑       Move cursor in active table\n")
@@ -1431,7 +1431,7 @@ func (m *Model) renderHelp() string {
 }
 
 func (m *Model) renderError() string {
-	return fmt.Sprintf("\n[!] Vigil Error: %s\nPress q to exit.\n", m.progress.Error)
+	return fmt.Sprintf("\n[!] Angry Turnip Error: %s\nPress q to exit.\n", m.progress.Error)
 }
 
 func groupFindingsByPackage(items []TUIFinding) []TUIFinding {

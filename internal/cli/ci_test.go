@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/policy"
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/policy"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 func TestEvaluateCIGateFailOnScanErrorAndUnsupported(t *testing.T) {

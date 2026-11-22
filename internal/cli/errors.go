@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
+	"github.com/guttenbergovitz/angry-turnip/internal/lockfile"
 )
 
 // ExitError signals that a CLI command completed with a specific process exit code
@@ -64,7 +64,7 @@ func resolveLockFile(absPath, customLockFile string) (string, lockfile.LockFileT
 }
 
 // reorderFlagsFirst moves flag tokens ahead of positional arguments so standard flag.FlagSet
-// accepts both `vigil explain --policy f.yaml CVE-1` and `vigil explain CVE-1 --policy f.yaml`.
+// accepts both `atnp explain --policy f.yaml CVE-1` and `atnp explain CVE-1 --policy f.yaml`.
 // valueFlags lists flag names (without leading dashes) that consume the following argument.
 func reorderFlagsFirst(args []string, valueFlags map[string]bool) []string {
 	var flags []string

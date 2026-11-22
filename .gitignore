@@ -19,11 +19,14 @@ go.work
 # Build output
 /bin/
 /dist/
+/atnp
 /vigil
 /result
 /result-*
 
 # Cache and temp
+.atnp.cache
+.atnp/
 .vigil.cache
 .vigil/
 .cache/

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 func sampleScanResult() *types.ScanResult {
@@ -418,7 +418,7 @@ func TestBaselineSaveLoadRoundTripAndScope(t *testing.T) {
 		t.Errorf("unexpected baseline scope: %+v", baseline.Scope)
 	}
 
-	tmpPath := filepath.Join(t.TempDir(), ".vigil.baseline.json")
+	tmpPath := filepath.Join(t.TempDir(), ".atnp.baseline.json")
 	if err := SaveBaseline(tmpPath, baseline); err != nil {
 		t.Fatalf("SaveBaseline error: %v", err)
 	}
@@ -876,7 +876,7 @@ func TestWriteSARIFMapsDecisionsAndProvenance(t *testing.T) {
 	}
 
 	// Even when 0 vulnerability findings exist, an incomplete or unverified scan that blocks CI
-	// must emit a non-empty SARIF result (VIGIL-SCAN-INCOMPLETE / VIGIL-EVIDENCE-UNVERIFIED).
+	// must emit a non-empty SARIF result (ATNP-SCAN-INCOMPLETE / ATNP-EVIDENCE-UNVERIFIED).
 	partialRes := &types.ScanResult{
 		LockFile: "pom.xml",
 		Coverage: types.ScanCoverage{
@@ -895,8 +895,8 @@ func TestWriteSARIFMapsDecisionsAndProvenance(t *testing.T) {
 	if err := WriteSARIF(&partialBuf, "pom.xml", partialEval); err != nil {
 		t.Fatalf("WriteSARIF error on partial scan: %v", err)
 	}
-	if !strings.Contains(partialBuf.String(), "VIGIL-SCAN-INCOMPLETE") {
-		t.Errorf("expected SARIF output for incomplete scan to contain VIGIL-SCAN-INCOMPLETE result, got:\n%s", partialBuf.String())
+	if !strings.Contains(partialBuf.String(), "ATNP-SCAN-INCOMPLETE") {
+		t.Errorf("expected SARIF output for incomplete scan to contain ATNP-SCAN-INCOMPLETE result, got:\n%s", partialBuf.String())
 	}
 }
 

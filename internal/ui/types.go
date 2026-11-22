@@ -3,9 +3,9 @@ package ui
 import (
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/container"
-	"github.com/guttenbergovitz/vigil-cli/internal/license"
-	"github.com/guttenbergovitz/vigil-cli/internal/secrets"
+	"github.com/guttenbergovitz/angry-turnip/internal/container"
+	"github.com/guttenbergovitz/angry-turnip/internal/license"
+	"github.com/guttenbergovitz/angry-turnip/internal/secrets"
 )
 
 // ActiveTab represents the selected top-level view or domain tab in the TUI.

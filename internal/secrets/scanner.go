@@ -14,13 +14,13 @@ import (
 type SecretType string
 
 const (
-	AWSKey           SecretType = "AWS Access Key"
-	AWSSecret        SecretType = "AWS Secret Access Key"
-	GitHubToken      SecretType = "GitHub Personal Access Token"
-	SlackWebhook     SecretType = "Slack Webhook URL"
-	PrivateSSHKey    SecretType = "Private SSH/RSA Key"
-	DatabasePassword SecretType = "Database Connection String with Password"
-	JWTToken         SecretType = "JSON Web Token (JWT)"
+	AWSKey             SecretType = "AWS Access Key"
+	AWSSecret          SecretType = "AWS Secret Access Key"
+	GitHubToken        SecretType = "GitHub Personal Access Token"
+	SlackWebhook       SecretType = "Slack Webhook URL"
+	PrivateSSHKey      SecretType = "Private SSH/RSA Key"
+	DatabasePassword   SecretType = "Database Connection String with Password"
+	JWTToken           SecretType = "JSON Web Token (JWT)"
 	GenericHighEntropy SecretType = "High Entropy Secret String"
 )
 

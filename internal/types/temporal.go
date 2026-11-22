@@ -7,8 +7,8 @@ import "time"
 // used to discard vulnerabilities: a vulnerability disclosed before a package release can
 // still affect that release if the issue was not fixed.
 type TemporalMetadata struct {
-	PackageReleasedAt     *time.Time
-	VulnPublishedAt       *time.Time
+	PackageReleasedAt      *time.Time
+	VulnPublishedAt        *time.Time
 	PublishedBeforeRelease bool
 }
 

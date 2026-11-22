@@ -6,36 +6,36 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Styles holds predefined Lipgloss styles for Vigil Fullscreen TUI.
+// Styles holds predefined Lipgloss styles for Angry Turnip Fullscreen TUI.
 type Styles struct {
-	Header           lipgloss.Style
-	Title            lipgloss.Style
-	Subtitle         lipgloss.Style
-	ActiveTab        lipgloss.Style
-	InactiveTab      lipgloss.Style
-	TabGap           lipgloss.Style
-	FilterBar        lipgloss.Style
-	StatusBar        lipgloss.Style
-	KeyHint          lipgloss.Style
-	Card             lipgloss.Style
-	BadgeCritical    lipgloss.Style
-	BadgeHigh        lipgloss.Style
-	BadgeMedium      lipgloss.Style
-	BadgeLow         lipgloss.Style
-	BadgeUnknown     lipgloss.Style
-	BadgeSecret      lipgloss.Style
-	BadgeIaC         lipgloss.Style
-	ChainTree        lipgloss.Style
-	ChainNode        lipgloss.Style
-	ChainTarget      lipgloss.Style
-	SearchPrompt     lipgloss.Style
-	SelectedRow      lipgloss.Style
-	DetailPanel      lipgloss.Style
-	ModalBox         lipgloss.Style
-	ReasonBox        lipgloss.Style
+	Header        lipgloss.Style
+	Title         lipgloss.Style
+	Subtitle      lipgloss.Style
+	ActiveTab     lipgloss.Style
+	InactiveTab   lipgloss.Style
+	TabGap        lipgloss.Style
+	FilterBar     lipgloss.Style
+	StatusBar     lipgloss.Style
+	KeyHint       lipgloss.Style
+	Card          lipgloss.Style
+	BadgeCritical lipgloss.Style
+	BadgeHigh     lipgloss.Style
+	BadgeMedium   lipgloss.Style
+	BadgeLow      lipgloss.Style
+	BadgeUnknown  lipgloss.Style
+	BadgeSecret   lipgloss.Style
+	BadgeIaC      lipgloss.Style
+	ChainTree     lipgloss.Style
+	ChainNode     lipgloss.Style
+	ChainTarget   lipgloss.Style
+	SearchPrompt  lipgloss.Style
+	SelectedRow   lipgloss.Style
+	DetailPanel   lipgloss.Style
+	ModalBox      lipgloss.Style
+	ReasonBox     lipgloss.Style
 }
 
-// DefaultStyles returns modern, high-contrast Lipgloss styles for Vigil TUI.
+// DefaultStyles returns modern, high-contrast Lipgloss styles for Angry Turnip TUI.
 func DefaultStyles() Styles {
 	return Styles{
 		Header: lipgloss.NewStyle().

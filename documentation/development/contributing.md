@@ -70,8 +70,8 @@ go test -v ./...
 go test -cover ./...
 
 # Run binary manually
-go build -o vigil ./cmd/vigil
-./vigil scan <test-project>
+go build -o atnp ./cmd/atnp
+./atnp scan <test-project>
 ```
 
 ## Documentation Expectations

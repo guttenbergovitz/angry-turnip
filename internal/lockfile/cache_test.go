@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 func TestCachePersistence(t *testing.T) {
 	tmpdir := t.TempDir()
-	cachePath := filepath.Join(tmpdir, ".vigil.cache")
+	cachePath := filepath.Join(tmpdir, DefaultCacheFileName)
 
 	result := &types.ScanResult{
 		Version:      1,
@@ -74,6 +74,33 @@ func TestCachePersistence(t *testing.T) {
 	}
 }
 
+func TestResolveCachePathPrefersCanonicalAndFallsBackToLegacy(t *testing.T) {
+	tmpdir := t.TempDir()
+
+	// When neither exists, returns canonical .atnp.cache path.
+	wantPrimary := filepath.Join(tmpdir, DefaultCacheFileName)
+	if got := ResolveCachePath(tmpdir); got != wantPrimary {
+		t.Errorf("ResolveCachePath(empty) = %q, want %q", got, wantPrimary)
+	}
+
+	// When only legacy .vigil.cache exists, falls back to .vigil.cache.
+	legacyPath := filepath.Join(tmpdir, LegacyCacheFileName)
+	if err := os.WriteFile(legacyPath, []byte(`{}`), 0644); err != nil {
+		t.Fatalf("write legacy cache: %v", err)
+	}
+	if got := ResolveCachePath(tmpdir); got != legacyPath {
+		t.Errorf("ResolveCachePath(legacy only) = %q, want %q", got, legacyPath)
+	}
+
+	// When both exist, prefers canonical .atnp.cache.
+	if err := os.WriteFile(wantPrimary, []byte(`{}`), 0644); err != nil {
+		t.Fatalf("write primary cache: %v", err)
+	}
+	if got := ResolveCachePath(tmpdir); got != wantPrimary {
+		t.Errorf("ResolveCachePath(both) = %q, want %q", got, wantPrimary)
+	}
+}
+
 func TestCacheInvalidation(t *testing.T) {
 	// Test that cache is invalid when lock file hash changes
 	oldHash := "old-hash-123"
@@ -91,7 +118,7 @@ func TestCacheInvalidation(t *testing.T) {
 }
 
 func TestCacheFileNotFound(t *testing.T) {
-	cachePath := "/nonexistent/path/.vigil.cache"
+	cachePath := "/nonexistent/path/.atnp.cache"
 	_, err := LoadCache(cachePath)
 	if err == nil {
 		t.Errorf("LoadCache() should error for nonexistent file")

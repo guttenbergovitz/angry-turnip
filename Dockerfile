@@ -17,11 +17,11 @@ COPY . .
 
 # Build binary with version injection
 RUN go build \
-    -ldflags "-X github.com/guttenbergovitz/vigil-cli/internal/version.Version=${VERSION} \
-              -X github.com/guttenbergovitz/vigil-cli/internal/version.Commit=${COMMIT} \
-              -X github.com/guttenbergovitz/vigil-cli/internal/version.Date=${DATE}" \
-    -o vigil \
-    ./cmd/vigil
+    -ldflags "-X github.com/guttenbergovitz/angry-turnip/internal/version.Version=${VERSION} \
+              -X github.com/guttenbergovitz/angry-turnip/internal/version.Commit=${COMMIT} \
+              -X github.com/guttenbergovitz/angry-turnip/internal/version.Date=${DATE}" \
+    -o atnp \
+    ./cmd/atnp
 
 # Runtime stage - minimal alpine image
 FROM alpine:latest
@@ -31,11 +31,9 @@ RUN apk --no-cache add ca-certificates git
 
 WORKDIR /app
 
-# Copy binary from builder
-COPY --from=builder /build/vigil /usr/local/bin/vigil
-
-# Create directory for cache
-RUN mkdir -p /app/.vigil
+# Copy binary from builder and provide legacy symlink for container backwards compatibility
+COPY --from=builder /build/atnp /usr/local/bin/atnp
+RUN ln -s /usr/local/bin/atnp /usr/local/bin/vigil && mkdir -p /app/.atnp
 
 # Environment variables (can be overridden at runtime)
 ENV NVD_API_KEY=""
@@ -45,5 +43,5 @@ ENV GITHUB_TOKEN=""
 WORKDIR /scan
 
 # Default command shows help
-ENTRYPOINT ["vigil"]
+ENTRYPOINT ["atnp"]
 CMD ["version"]

@@ -1,6 +1,6 @@
 # Reference Fixtures & Scanner Correctness Benchmark
 
-This directory contains independently verified reference fixtures across all six ecosystems supported by Vigil (`npm`, `go`, `maven`, `python`, `cargo`, `composer`).
+This directory contains independently verified reference fixtures across all six ecosystems supported by Angry Turnip (`npm`, `go`, `maven`, `python`, `cargo`, `composer`).
 
 ## Structure
 
@@ -22,7 +22,7 @@ Runs without network access as part of standard Go testing. Includes two indepen
 go test -v ./benchmarks/reference/...
 ```
 
-## Running Live Scanner Comparison (Vigil vs OSV-Scanner, Trivy, Grype)
+## Running Live Scanner Comparison (Angry Turnip vs OSV-Scanner, Trivy, Grype)
 
 Uses `benchmarks/reference/cmd/compare` to normalize each scanner's output to canonical `(advisoryID, PURL)` pairs, separate execution status (`OK` / `FAILED` / `N/A`) from finding counts, and compute recall against `expected.json`:
 
@@ -30,4 +30,4 @@ Uses `benchmarks/reference/cmd/compare` to normalize each scanner's output to ca
 bash benchmarks/reference/compare.sh
 ```
 
-See [RESULTS.md](RESULTS.md) for the empirical live benchmark comparison between Vigil and Trivy across all six ecosystems.
+See [RESULTS.md](RESULTS.md) for the empirical live benchmark comparison between Angry Turnip and Trivy across all six ecosystems.

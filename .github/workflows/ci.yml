@@ -28,5 +28,5 @@ jobs:
       - name: Run unit tests
         run: go test -short -race -v ./...
 
-      - name: Build vigil binary
-        run: go build -o vigil ./cmd/vigil
+      - name: Build atnp binary
+        run: go build -o atnp ./cmd/atnp

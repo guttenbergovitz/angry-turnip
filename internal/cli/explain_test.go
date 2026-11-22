@@ -9,15 +9,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
-	"github.com/guttenbergovitz/vigil-cli/internal/policy"
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/lockfile"
+	"github.com/guttenbergovitz/angry-turnip/internal/policy"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 func TestReorderFlagsFirstSupportsFlagsAfterPositionalArgs(t *testing.T) {
-	args := []string{"CVE-2026-0001", ".", "--policy", "vigil.yaml", "--baseline", ".vigil.baseline.json", "--format=json"}
+	args := []string{"CVE-2026-0001", ".", "--policy", "atnp.yaml", "--baseline", ".atnp.baseline.json", "--format=json"}
 	got := reorderFlagsFirst(args, map[string]bool{"policy": true, "baseline": true, "format": true})
-	want := []string{"--policy", "vigil.yaml", "--baseline", ".vigil.baseline.json", "--format=json", "CVE-2026-0001", "."}
+	want := []string{"--policy", "atnp.yaml", "--baseline", ".atnp.baseline.json", "--format=json", "CVE-2026-0001", "."}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("reorderFlagsFirst() = %v, want %v", got, want)
 	}
@@ -92,10 +92,10 @@ func TestBaselineCommandValidatesHashFreshnessAndCompleteness(t *testing.T) {
 		t.Fatalf("HashFile: %v", err)
 	}
 
-	cachePath := filepath.Join(dir, ".vigil.cache")
-	outFile := filepath.Join(dir, ".vigil.baseline.json")
+	cachePath := filepath.Join(dir, ".atnp.cache")
+	outFile := filepath.Join(dir, ".atnp.baseline.json")
 
-	// 1. Incomplete scan must be rejected by vigil baseline.
+	// 1. Incomplete scan must be rejected by atnp baseline.
 	incomplete := &types.ScanResult{
 		Version:      1,
 		ProjectPath:  dir,

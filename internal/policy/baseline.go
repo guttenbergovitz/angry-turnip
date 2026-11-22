@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // CurrentResolutionModelVersion identifies the dependency resolution and PURL schema version

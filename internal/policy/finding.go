@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/report"
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/report"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // SourceEvidence preserves per-source severity and CVSS provenance before conservative

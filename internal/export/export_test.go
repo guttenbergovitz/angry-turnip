@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 func TestCSVExport(t *testing.T) {
@@ -22,9 +22,9 @@ func TestCSVExport(t *testing.T) {
 				Type:    types.Production,
 				Vulnerabilities: []types.Vulnerability{
 					{
-						ID:       "CVE-2024-1234",
-						Summary:  "XSS vulnerability",
-						Severity: types.Medium,
+						ID:        "CVE-2024-1234",
+						Summary:   "XSS vulnerability",
+						Severity:  types.Medium,
 						RiskScore: 45,
 					},
 				},
@@ -70,9 +70,9 @@ func TestMarkdownExport(t *testing.T) {
 				Type:    types.Production,
 				Vulnerabilities: []types.Vulnerability{
 					{
-						ID:       "CVE-2024-1234",
-						Summary:  "XSS vulnerability",
-						Severity: types.Critical,
+						ID:        "CVE-2024-1234",
+						Summary:   "XSS vulnerability",
+						Severity:  types.Critical,
 						RiskScore: 95,
 					},
 				},

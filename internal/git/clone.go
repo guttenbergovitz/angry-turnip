@@ -35,7 +35,7 @@ func CloneToTemp(repoURL string) (string, func(), error) {
 // configuration headers rather than embedded in the command-line URL, preventing exposure in
 // process listings and error diagnostics.
 func CloneToTempContext(ctx context.Context, repoURL string) (string, func(), error) {
-	tmpDir, err := os.MkdirTemp("", "vigil-scan-*")
+	tmpDir, err := os.MkdirTemp("", "atnp-scan-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create temp dir: %w", err)
 	}

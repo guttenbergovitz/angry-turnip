@@ -222,7 +222,7 @@ lockfile.SaveCache(cachePath, result)
   ↓
 JSON encode ScanResult
   ↓
-Write to .vigil.cache
+Write to .atnp.cache
 ```
 
 Enables fast subsequent reports.
@@ -234,7 +234,7 @@ Enables fast subsequent reports.
 ```
 lockfile.LoadCache()
   ↓
-Read .vigil.cache
+Read .atnp.cache (or fallback to .vigil.cache)
   ↓
 JSON decode to ScanResult
 ```

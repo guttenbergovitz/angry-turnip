@@ -11,16 +11,16 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/guttenbergovitz/vigil-cli/internal/container"
-	"github.com/guttenbergovitz/vigil-cli/internal/export"
-	"github.com/guttenbergovitz/vigil-cli/internal/git"
-	"github.com/guttenbergovitz/vigil-cli/internal/license"
-	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
-	"github.com/guttenbergovitz/vigil-cli/internal/policy"
-	"github.com/guttenbergovitz/vigil-cli/internal/scan"
-	"github.com/guttenbergovitz/vigil-cli/internal/secrets"
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
-	"github.com/guttenbergovitz/vigil-cli/internal/ui"
+	"github.com/guttenbergovitz/angry-turnip/internal/container"
+	"github.com/guttenbergovitz/angry-turnip/internal/export"
+	"github.com/guttenbergovitz/angry-turnip/internal/git"
+	"github.com/guttenbergovitz/angry-turnip/internal/license"
+	"github.com/guttenbergovitz/angry-turnip/internal/lockfile"
+	"github.com/guttenbergovitz/angry-turnip/internal/policy"
+	"github.com/guttenbergovitz/angry-turnip/internal/scan"
+	"github.com/guttenbergovitz/angry-turnip/internal/secrets"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/ui"
 )
 
 // Scan executes the scan command
@@ -432,9 +432,9 @@ func (p *PlainStageReporter) Error(msg string) {
 	}
 }
 
-func (p *PlainStageReporter) Progress(_, _ int, _ string, _ int) {}
+func (p *PlainStageReporter) Progress(_, _ int, _ string, _ int)                        {}
 func (p *PlainStageReporter) Vulnerability(_ types.Vulnerability, _ string, _ []string) {}
-func (p *PlainStageReporter) Done(_ *types.ScanResult) {}
+func (p *PlainStageReporter) Done(_ *types.ScanResult)                                  {}
 
 func (p *PlainStageReporter) OnStageEvent(ev scan.ScanEvent) {
 	if p.out == nil {

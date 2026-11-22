@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/version"
+	"github.com/guttenbergovitz/angry-turnip/internal/version"
 )
 
 // WriteSARIF serialises an EvaluationResult as a SARIF 2.1.0 report suitable for GitHub
@@ -138,7 +138,7 @@ func WriteSARIF(out io.Writer, lockFile string, eval EvaluationResult) error {
 	switch eval.EvidenceState {
 	case EvidenceInvalid:
 		addDiagnosticResult(
-			"VIGIL-EVIDENCE-INVALID",
+			"ATNP-EVIDENCE-INVALID",
 			"Invalid or inconsistent scan coverage evidence",
 			"error",
 			fmt.Sprintf("[BLOCK] Scan evidence is INVALID (%s).", strings.Join(eval.EvidenceNotes, " ")),
@@ -146,7 +146,7 @@ func WriteSARIF(out io.Writer, lockFile string, eval EvaluationResult) error {
 		)
 	case EvidenceUnverified:
 		addDiagnosticResult(
-			"VIGIL-EVIDENCE-UNVERIFIED",
+			"ATNP-EVIDENCE-UNVERIFIED",
 			"Unverified scan scope (zero packages evaluated)",
 			"error",
 			fmt.Sprintf("[BLOCK] Scan evidence is UNVERIFIED (%s).", strings.Join(eval.EvidenceNotes, " ")),
@@ -158,7 +158,7 @@ func WriteSARIF(out io.Writer, lockFile string, eval EvaluationResult) error {
 			level = "error"
 		}
 		addDiagnosticResult(
-			"VIGIL-SCAN-INCOMPLETE",
+			"ATNP-SCAN-INCOMPLETE",
 			"Incomplete dependency scan coverage (failed or unsupported packages)",
 			level,
 			fmt.Sprintf("[%s] Scan coverage is PARTIAL (%d failed, %d unsupported package(s)). %s",
@@ -174,7 +174,7 @@ func WriteSARIF(out io.Writer, lockFile string, eval EvaluationResult) error {
 
 	if eval.BaselineScopeCompatible != nil && !*eval.BaselineScopeCompatible {
 		addDiagnosticResult(
-			"VIGIL-BASELINE-INCOMPATIBLE",
+			"ATNP-BASELINE-INCOMPATIBLE",
 			"Baseline scan configuration is incompatible with current scan",
 			"warning",
 			"[REVIEW] Baseline configuration fingerprint mismatch; baseline rejected for delta comparison.",
@@ -187,7 +187,7 @@ func WriteSARIF(out io.Writer, lockFile string, eval EvaluationResult) error {
 
 	if eval.Resolution != nil && len(eval.Resolution.Ambiguous) > 0 {
 		addDiagnosticResult(
-			"VIGIL-RESOLUTION-AMBIGUOUS",
+			"ATNP-RESOLUTION-AMBIGUOUS",
 			"Ambiguous dependency graph edges across multiple lockfile package versions",
 			"warning",
 			fmt.Sprintf("Dependency graph contains %d ambiguous multi-version edge(s) that were left unlinked rather than fabricated.", len(eval.Resolution.Ambiguous)),
@@ -205,9 +205,9 @@ func WriteSARIF(out io.Writer, lockFile string, eval EvaluationResult) error {
 			{
 				"tool": map[string]interface{}{
 					"driver": map[string]interface{}{
-						"name":           "Vigil",
+						"name":           "Angry Turnip",
 						"version":        version.Get(),
-						"informationUri": "https://github.com/guttenbergovitz/vigil-cli",
+						"informationUri": "https://github.com/guttenbergovitz/angry-turnip",
 						"rules":          rules,
 					},
 				},

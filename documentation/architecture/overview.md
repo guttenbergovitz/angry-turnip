@@ -32,7 +32,7 @@ System design and core concepts.
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                         CLI Layer                            │
-│  vigil scan | vigil report | vigil ci                       │
+│  atnp scan | atnp report | atnp ci | atnp explain            │
 └──────────────────┬──────────────────────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────────────────────┐
@@ -84,11 +84,11 @@ System design and core concepts.
 5. **Enrich NVD** - Get authoritative CVE data for CVE-* IDs
 6. **Enrich GitHub** - Get GHSA data for GHSA-* IDs
 7. **Calculate risk** - Compute risk scores based on context
-8. **Cache results** - Save to `.vigil.cache`
+8. **Cache results** - Save to `.atnp.cache`
 
 ### Report Phase
 
-1. **Load cache** - Read `.vigil.cache` from previous scan
+1. **Load cache** - Read `.atnp.cache` (or legacy `.vigil.cache`) from previous scan
 2. **Filter** - Apply severity/type filters
 3. **Classify** - Determine exploit types and exploitability
 4. **Format** - Generate requested output format
@@ -97,7 +97,7 @@ System design and core concepts.
 
 ## Key Components
 
-**cmd/vigil** - Entry point, command routing
+**cmd/atnp** - Canonical entry point (`atnp`), command routing (with legacy compatibility entry point in **cmd/vigil**)
 
 **internal/cli** - Command implementations (scan, report, ci)
 
@@ -134,7 +134,7 @@ System design and core concepts.
 
 **Cache invalidation**: Hash mismatch triggers rescan
 
-**Cache location**: `.vigil.cache` in scanned directory
+**Cache location**: `.atnp.cache` in scanned directory (with read fallback to `.vigil.cache`)
 
 **Cache format**: JSON (ScanResult struct)
 
@@ -169,7 +169,7 @@ System design and core concepts.
 
 **Memory**: ~50-100MB for typical projects
 
-**Disk**: Negligible (.vigil.cache typically <1MB)
+**Disk**: Negligible (.atnp.cache typically <1MB)
 
 ## Extensibility
 

@@ -2,7 +2,7 @@ package types
 
 import "time"
 
-// Ecosystem represents a package manager ecosystem supported by Vigil.
+// Ecosystem represents a package manager ecosystem supported by Angry Turnip.
 type Ecosystem string
 
 const (
@@ -80,11 +80,11 @@ type ThreatIntelMetadata struct {
 type Vulnerability struct {
 	ID             string
 	Summary        string
-	Description    string     // Full description/details from database
+	Description    string // Full description/details from database
 	Severity       Severity
-	CVSSScore      float64    // CVSS v3.0+ score (0.0-10.0)
-	CVSSVector     string     // CVSS vector string for detailed analysis
-	RiskScore      int        // Vigil's computed risk score (0-100)
+	CVSSScore      float64 // CVSS v3.0+ score (0.0-10.0)
+	CVSSVector     string  // CVSS vector string for detailed analysis
+	RiskScore      int     // Angry Turnip's computed risk score (0-100)
 	References     []string
 	PublishedAt    *time.Time
 	ModifiedAt     *time.Time

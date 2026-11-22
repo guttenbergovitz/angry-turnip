@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
-	"github.com/guttenbergovitz/vigil-cli/internal/policy"
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/lockfile"
+	"github.com/guttenbergovitz/angry-turnip/internal/policy"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
-// Explain executes the `vigil explain <vuln-id>` command, printing an auditable breakdown
+// Explain executes the `atnp explain <vuln-id>` command, printing an auditable breakdown
 // of why a vulnerability is allowed, flagged for review, or blocked, together with evidence
 // state, freshness warnings, and missing evidence.
 func Explain(args []string) error {
@@ -36,7 +36,7 @@ func Explain(args []string) error {
 	}
 
 	if fs.NArg() < 1 {
-		return fmt.Errorf("usage: vigil explain <vuln-id> [path] [--policy file] [--baseline file] [--format text|json]")
+		return fmt.Errorf("usage: atnp explain <vuln-id> [path] [--policy file] [--baseline file] [--format text|json]")
 	}
 
 	vulnID := strings.TrimSpace(fs.Arg(0))
@@ -50,10 +50,10 @@ func Explain(args []string) error {
 		return fmt.Errorf("resolve path: %w", err)
 	}
 
-	cachePath := filepath.Join(absPath, ".vigil.cache")
+	cachePath := lockfile.ResolveCachePath(absPath)
 	result, err := lockfile.LoadCache(cachePath)
 	if err != nil {
-		return fmt.Errorf("load cache (run `vigil scan` first): %w", err)
+		return fmt.Errorf("load cache (run `atnp scan` first): %w", err)
 	}
 
 	warnings := checkExplainCacheWarnings(absPath, result, *maxCacheAge, time.Now().UTC())
@@ -115,7 +115,7 @@ func checkExplainCacheWarnings(absPath string, result *types.ScanResult, maxAge 
 		return warnings
 	}
 	if maxAge > 0 && now.Sub(result.ScannedAt) > maxAge {
-		warnings = append(warnings, fmt.Sprintf("Cached scan is %s old (scanned at %s); re-run `vigil scan` for fresh results.",
+		warnings = append(warnings, fmt.Sprintf("Cached scan is %s old (scanned at %s); re-run `atnp scan` for fresh results.",
 			now.Sub(result.ScannedAt).Round(time.Minute), result.ScannedAt.Format(time.RFC3339)))
 	}
 	if result.LockFile != "" {

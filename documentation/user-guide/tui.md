@@ -1,9 +1,9 @@
 # Interactive Security Assessment TUI
 
-Vigil includes an interactive terminal assessment view built on Bubble Tea, designed for observable multi-stage scanning and explainable policy triage.
+Angry Turnip (`atnp`) includes an interactive terminal assessment view built on Bubble Tea, designed for observable multi-stage scanning and explainable policy triage.
 
 ```
-VIGIL / ASSESSMENT | DECISION: BLOCK | EVIDENCE: COMPLETE | RESOLUTION: COMPLETE | Coverage: 247/247
+ANGRY TURNIP / ASSESSMENT | DECISION: BLOCK | EVIDENCE: COMPLETE | RESOLUTION: COMPLETE | Coverage: 247/247
 [1] Findings (SCA)  [2] Secrets (0)  [3] IaC (0)  [4] Licences (247)  [5] Dep Graph  [o] Overview  [i] Evidence
 BLOCK: 2 · REVIEW: 8 · ALLOW: 26 (Accepted: 1) | Showing: 36
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -21,11 +21,11 @@ BLOCK: 2 · REVIEW: 8 · ALLOW: 26 (Accepted: 1) | Showing: 36
 
 ## Observable Scan Pipeline
 
-During scanning (`StateScanning`), Vigil displays live status across all nine assessment stages rather than a single global percentage:
+During scanning (`StateScanning`), Angry Turnip displays live status across all nine assessment stages rather than a single global percentage:
 
 1. **Discover & parse** — lockfile/manifest discovery and component count
 2. **Dependency resolution** — resolved nodes, unresolved entries, and ambiguous multi-version edges
-3. **Vulnerability lookup** — live `processed`, `queued`, `active`, `failed`, and `skipped` counters with actual `VIGIL_WORKERS`
+3. **Vulnerability lookup** — live `processed`, `queued`, `active`, `failed`, and `skipped` counters with actual `ATNP_WORKERS`
 4. **NVD / GHSA enrichment** — authoritative CVSS and severity enrichment
 5. **CISA KEV / FIRST EPSS** — parallel threat-intelligence enrichment
 6. **Secrets scan** — credential and high-entropy pattern detection
@@ -76,11 +76,11 @@ By default, **all findings are shown** (including `Medium`, `Low`, and `Unknown`
 ## CLI Execution Modes
 
 ```bash
-vigil scan .                        # Interactive TUI (when stdout is a TTY)
-vigil scan . --no-tui               # Human-readable CLI summary
-vigil scan . --output json          # Machine-readable JSON on stdout (TUI auto-disabled)
-vigil scan . --output sarif         # Machine-readable SARIF 2.1.0 on stdout (TUI auto-disabled)
-vigil scan . --scope sca            # Run SCA only (skips Secrets, IaC, and Licences)
-vigil scan . --scope all            # Run all assessment stages (default)
-vigil scan . --progress plain       # Stream stage completion lines to stderr
+atnp scan .                         # Interactive TUI (when stdout is a TTY)
+atnp scan . --no-tui                # Human-readable CLI summary
+atnp scan . --output json           # Machine-readable JSON on stdout (TUI auto-disabled)
+atnp scan . --output sarif          # Machine-readable SARIF 2.1.0 on stdout (TUI auto-disabled)
+atnp scan . --scope sca             # Run SCA only (skips Secrets, IaC, and Licences)
+atnp scan . --scope all             # Run all assessment stages (default)
+atnp scan . --progress plain        # Stream stage completion lines to stderr
 ```

@@ -70,7 +70,7 @@ func TestCloneToTemp(t *testing.T) {
 		t.Skip("skipping live network git clone test in -short mode")
 	}
 
-	url := "https://github.com/guttenbergovitz/vigil-cli"
+	url := "https://github.com/guttenbergovitz/angry-turnip"
 	t.Logf("Cloning %s", url)
 
 	repoDir, cleanup, err := CloneToTemp(url)

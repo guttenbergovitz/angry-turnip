@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
-	"github.com/guttenbergovitz/vigil-cli/internal/osv"
-	"github.com/guttenbergovitz/vigil-cli/internal/types"
+	"github.com/guttenbergovitz/angry-turnip/internal/lockfile"
+	"github.com/guttenbergovitz/angry-turnip/internal/osv"
+	"github.com/guttenbergovitz/angry-turnip/internal/types"
 )
 
 // ProgressReporter defines how the orchestrator reports progress to the UI.
@@ -30,7 +30,7 @@ func Scan(ctx context.Context, absPath, lockFile string, lockType lockfile.LockF
 }
 
 // Scan parses the lock file, scans all resolved dependencies using the Scanner's injected clients,
-// persists the scan snapshot to .vigil.cache, and returns the resulting ScanResult.
+// persists the scan snapshot to .atnp.cache, and returns the resulting ScanResult.
 func (s *Scanner) Scan(ctx context.Context, absPath, lockFile string, lockType lockfile.LockFileType, lockHash, lockFilePath string, skipDevDeps bool, reporter ProgressReporter) (*types.ScanResult, error) {
 	if lockFilePath == "" || lockFile == "" {
 		errMsg := "No lock file found. Please run this in a project with a supported lock file."
@@ -214,7 +214,7 @@ func (s *Scanner) Scan(ctx context.Context, absPath, lockFile string, lockType l
 		reporter.Done(result)
 	}
 
-	cachePath := filepath.Join(absPath, ".vigil.cache")
+	cachePath := filepath.Join(absPath, lockfile.DefaultCacheFileName)
 	if err := lockfile.SaveCache(cachePath, result); err != nil {
 		return nil, fmt.Errorf("save cache: %w", err)
 	}
@@ -950,9 +950,13 @@ func buildGraphFromDeps(deps *lockfile.Dependencies, ecosystem types.Ecosystem) 
 	return graph
 }
 
-// getWorkerCount returns the number of parallel workers from VIGIL_WORKERS (default 10, max 100).
+// getWorkerCount returns the number of parallel workers from ATNP_WORKERS (falling back to
+// legacy VIGIL_WORKERS when ATNP_WORKERS is unset; default 10, max 100).
 func getWorkerCount() int {
-	workers := os.Getenv("VIGIL_WORKERS")
+	workers := os.Getenv("ATNP_WORKERS")
+	if workers == "" {
+		workers = os.Getenv("VIGIL_WORKERS")
+	}
 	if workers == "" {
 		return 10
 	}
