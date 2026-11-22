@@ -168,7 +168,7 @@ func (c *Client) QueryWithEcosystemContext(ctx context.Context, pkg, version str
 			sev = deriveSeverityFromCVSSv2(v.CVSSv2.Score)
 		}
 		if sev == "" {
-			sev = types.Medium
+			sev = types.Unknown
 		}
 
 		// Extract CVSS score - try cvssv3 first, then cvssv2, then database_specific

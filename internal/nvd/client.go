@@ -321,6 +321,6 @@ func parseSeverity(s string) types.Severity {
 		if strings.Contains(severityUpper, "LOW") {
 			return types.Low
 		}
-		return types.Medium // Default to medium instead of low for unknown
+		return types.Unknown
 	}
 }

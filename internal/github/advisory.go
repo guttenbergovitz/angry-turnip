@@ -98,10 +98,7 @@ func (c *Client) QueryGHSA(ghsaID string) (*types.Vulnerability, error) {
 		}
 	}
 
-	severity := types.Severity(strings.ToLower(adv.Severity))
-	if severity == "" {
-		severity = types.Medium
-	}
+	severity := types.NormaliseSeverity(types.Severity(adv.Severity))
 
 	return &types.Vulnerability{
 		ID:          adv.GHSAID,
@@ -179,10 +176,7 @@ func (c *Client) queryGHSAWithoutAuth(ghsaID string) (*types.Vulnerability, erro
 		}
 	}
 
-	severity := types.Severity(strings.ToLower(advisory.Severity))
-	if severity == "" {
-		severity = types.Medium
-	}
+	severity := types.NormaliseSeverity(types.Severity(advisory.Severity))
 
 	return &types.Vulnerability{
 		ID:          advisory.GHSAID,

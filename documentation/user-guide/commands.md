@@ -92,7 +92,7 @@ Vigil can scan repositories directly without manual cloning:
 - Only the lockfile is needed (no `node_modules` required)
 - Shallow clone used for speed (`--depth 1`)
 - Temp directory cleaned up even on error
-- For HTTPS URLs with `GITHUB_TOKEN`, token is injected into clone URL
+- For HTTPS GitHub URLs with `GITHUB_TOKEN`, authentication is passed via git `GIT_CONFIG_*` `extraheader` environment variables (never embedded in the clone URL) and redacted from error output
 
 ### Rate Limiting
 
@@ -136,7 +136,7 @@ API calls are rate-limited to respect service limits:
 - `go.mod` (Go modules)
 
 **Java / Kotlin:**
-- `pom.xml` (Maven)
+- `pom.xml` (Maven — parses direct `<dependencies>`, local `<properties>`, `<parent>`, and `<dependencyManagement>`; dependencies whose versions come from external parent POMs or BOMs are explicitly surfaced as `unsupported` in scan coverage rather than silently omitted)
 - `gradle.lockfile` (Gradle)
 
 ### Output

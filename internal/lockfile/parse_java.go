@@ -6,22 +6,26 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 	"strings"
 )
 
 var propertyRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
 
-// ParsePomXml parses Maven pom.xml XML build file.
+// ParsePomXml parses a Maven pom.xml manifest.
+//
+// Scope: reads direct <dependencies>, resolves local <properties>, <parent>, and
+// <dependencyManagement> version declarations. Dependencies whose version is inherited
+// from an external parent POM or BOM are recorded in Dependencies.Unresolved rather than
+// silently discarded, so scan coverage accurately reflects unresolved entries.
 func ParsePomXml(r io.Reader) (*Dependencies, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, fmt.Errorf("read pom.xml: %w", err)
 	}
 
-	// 1. Extract properties map
 	props := extractPomProperties(data)
 
-	// 2. Decode POM structure
 	type dependency struct {
 		GroupID    string `xml:"groupId"`
 		ArtifactID string `xml:"artifactId"`
@@ -29,8 +33,19 @@ func ParsePomXml(r io.Reader) (*Dependencies, error) {
 		Scope      string `xml:"scope"`
 	}
 
+	type parent struct {
+		GroupID    string `xml:"groupId"`
+		ArtifactID string `xml:"artifactId"`
+		Version    string `xml:"version"`
+	}
+
 	type pom struct {
-		Dependencies []dependency `xml:"dependencies>dependency"`
+		GroupID              string       `xml:"groupId"`
+		ArtifactID           string       `xml:"artifactId"`
+		Version              string       `xml:"version"`
+		Parent               *parent      `xml:"parent"`
+		Dependencies         []dependency `xml:"dependencies>dependency"`
+		ManagedDependencies  []dependency `xml:"dependencyManagement>dependencies>dependency"`
 	}
 
 	var p pom
@@ -38,14 +53,48 @@ func ParsePomXml(r io.Reader) (*Dependencies, error) {
 		return nil, fmt.Errorf("unmarshal pom.xml: %w", err)
 	}
 
+	// Populate built-in Maven project/parent properties.
+	projectGroup := strings.TrimSpace(p.GroupID)
+	projectVersion := strings.TrimSpace(p.Version)
+	if p.Parent != nil {
+		if projectGroup == "" {
+			projectGroup = strings.TrimSpace(p.Parent.GroupID)
+		}
+		if projectVersion == "" {
+			projectVersion = strings.TrimSpace(p.Parent.Version)
+		}
+		if strings.TrimSpace(p.Parent.Version) != "" {
+			props["project.parent.version"] = strings.TrimSpace(p.Parent.Version)
+		}
+	}
+	if projectGroup != "" {
+		props["project.groupId"] = projectGroup
+	}
+	if projectVersion != "" {
+		props["project.version"] = projectVersion
+	}
+
+	// Index versions declared in local <dependencyManagement>.
+	managedVersions := make(map[string]string, len(p.ManagedDependencies))
+	for _, dep := range p.ManagedDependencies {
+		groupID := resolvePomProperty(strings.TrimSpace(dep.GroupID), props)
+		artifactID := resolvePomProperty(strings.TrimSpace(dep.ArtifactID), props)
+		ver := resolvePomProperty(strings.TrimSpace(dep.Version), props)
+		if groupID != "" && artifactID != "" && ver != "" && !propertyRegex.MatchString(ver) {
+			managedVersions[groupID+":"+artifactID] = ver
+		}
+	}
+
 	deps := &Dependencies{
 		Production:  make(map[string]string),
 		Development: make(map[string]string),
 	}
 
+	unresolvedSet := make(map[string]bool)
+
 	for _, dep := range p.Dependencies {
-		groupID := strings.TrimSpace(dep.GroupID)
-		artifactID := strings.TrimSpace(dep.ArtifactID)
+		groupID := resolvePomProperty(strings.TrimSpace(dep.GroupID), props)
+		artifactID := resolvePomProperty(strings.TrimSpace(dep.ArtifactID), props)
 		version := strings.TrimSpace(dep.Version)
 		scope := strings.TrimSpace(strings.ToLower(dep.Scope))
 
@@ -53,19 +102,33 @@ func ParsePomXml(r io.Reader) (*Dependencies, error) {
 			continue
 		}
 
-		// Resolve ${property.name} references
-		version = resolvePomProperty(version, props)
+		pkgName := groupID + ":" + artifactID
+
 		if version == "" {
-			continue
+			version = managedVersions[pkgName]
+		} else {
+			version = resolvePomProperty(version, props)
 		}
 
-		pkgName := groupID + ":" + artifactID
+		// Record dependencies whose version could not be resolved locally (e.g. external BOM/parent).
+		if version == "" || propertyRegex.MatchString(version) {
+			unresolvedSet[pkgName] = true
+			continue
+		}
 
 		if scope == "test" {
 			deps.Development[pkgName] = version
 		} else {
 			deps.Production[pkgName] = version
 		}
+	}
+
+	if len(unresolvedSet) > 0 {
+		deps.Unresolved = make([]string, 0, len(unresolvedSet))
+		for pkg := range unresolvedSet {
+			deps.Unresolved = append(deps.Unresolved, pkg)
+		}
+		sort.Strings(deps.Unresolved)
 	}
 
 	return deps, nil
@@ -85,7 +148,6 @@ func ParseGradleLockfile(r io.Reader) (*Dependencies, error) {
 			continue
 		}
 
-		// Format: group:artifact:version=classpaths
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) < 1 {
 			continue

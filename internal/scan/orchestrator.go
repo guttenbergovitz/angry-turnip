@@ -11,10 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/guttenbergovitz/vigil-cli/internal/github"
 	"github.com/guttenbergovitz/vigil-cli/internal/lockfile"
-	"github.com/guttenbergovitz/vigil-cli/internal/npm"
-	"github.com/guttenbergovitz/vigil-cli/internal/nvd"
 	"github.com/guttenbergovitz/vigil-cli/internal/osv"
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
@@ -27,8 +24,14 @@ type ProgressReporter interface {
 	Done(result *types.ScanResult)
 }
 
-// Scan performs the vulnerability scan for a project lock file.
+// Scan performs the vulnerability scan for a project lock file using DefaultScanner.
 func Scan(ctx context.Context, absPath, lockFile string, lockType lockfile.LockFileType, lockHash, lockFilePath string, skipDevDeps bool, reporter ProgressReporter) (*types.ScanResult, error) {
+	return DefaultScanner().Scan(ctx, absPath, lockFile, lockType, lockHash, lockFilePath, skipDevDeps, reporter)
+}
+
+// Scan parses the lock file, scans all resolved dependencies using the Scanner's injected clients,
+// persists the scan snapshot to .vigil.cache, and returns the resulting ScanResult.
+func (s *Scanner) Scan(ctx context.Context, absPath, lockFile string, lockType lockfile.LockFileType, lockHash, lockFilePath string, skipDevDeps bool, reporter ProgressReporter) (*types.ScanResult, error) {
 	if lockFilePath == "" || lockFile == "" {
 		errMsg := "No lock file found. Please run this in a project with a supported lock file."
 		if reporter != nil {
@@ -143,32 +146,25 @@ func Scan(ctx context.Context, absPath, lockFile string, lockType lockfile.LockF
 		return nil, fmt.Errorf("%s", errMsg)
 	}
 
-	osvClient := osv.New("https://api.osv.dev/v1/query", 10)
-	nvdAPIKey := os.Getenv("NVD_API_KEY")
-	nvdClient := nvd.New("https://services.nvd.nist.gov/rest/json/cves/2.0", nvdAPIKey, 10)
-	githubToken := os.Getenv("GITHUB_TOKEN")
-	githubClient := github.New(githubToken, 10)
-	npmClient := npm.New("https://registry.npmjs.org", 10)
-
 	scanFn := func(ctx context.Context, node *types.DependencyNode, nodeKey string) ([]types.Vulnerability, error) {
 		queryCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 
-		vulns, err := osvClient.QueryWithEcosystemContext(queryCtx, node.Name, node.Version, graph.Ecosystem)
+		vulns, err := s.VulnSource.QueryWithEcosystemContext(queryCtx, node.Name, node.Version, graph.Ecosystem)
 		if err != nil {
 			return nil, err
 		}
 
 		// Optionally fetch release date as informational metadata for npm packages.
 		// Release dates are never used to filter or discard vulnerabilities.
-		if len(vulns) > 0 && graph.Ecosystem == types.EcosystemNPM {
-			if releasedAt, relErr := npmClient.GetReleaseDate(node.Name, node.Version); relErr == nil {
+		if len(vulns) > 0 && graph.Ecosystem == types.EcosystemNPM && s.ReleaseDates != nil {
+			if releasedAt, relErr := s.ReleaseDates.GetReleaseDate(node.Name, node.Version); relErr == nil {
 				node.ReleasedAt = releasedAt
 			}
 		}
 
 		for j := range vulns {
-			enrichVulnerability(&vulns[j], node, nvdAPIKey, nvdClient, githubClient)
+			s.enrichVulnerability(ctx, &vulns[j], node)
 		}
 
 		return vulns, nil
@@ -189,37 +185,31 @@ func Scan(ctx context.Context, absPath, lockFile string, lockType lockfile.LockF
 }
 
 // enrichVulnerability enriches a single vulnerability with NVD/GHSA CVSS data and risk score.
-func enrichVulnerability(
-	vuln *types.Vulnerability,
-	node *types.DependencyNode,
-	nvdAPIKey string,
-	nvdClient *nvd.Client,
-	githubClient *github.Client,
-) {
+func (s *Scanner) enrichVulnerability(ctx context.Context, vuln *types.Vulnerability, node *types.DependencyNode) {
 	originalCVSS := vuln.CVSSScore
 
-	// 1. Try NVD API for CVE-* IDs when NVD_API_KEY is configured.
-	if vuln.CVEID != "" && strings.HasPrefix(vuln.CVEID, "CVE-") && nvdAPIKey != "" {
-		nvdVuln, err := nvdClient.QueryCVE(vuln.CVEID)
-		if err == nil && nvdVuln != nil {
-			vuln.CVETitle = nvdVuln.CVETitle
-			vuln.CVEDescription = nvdVuln.CVEDescription
-			if nvdVuln.CVESeverity != "" {
-				vuln.CVESeverity = types.NormaliseSeverity(nvdVuln.CVESeverity)
-				vuln.Severity = vuln.CVESeverity
-			}
-			if nvdVuln.CVSSScore > 0 {
-				vuln.CVSSScore = nvdVuln.CVSSScore
-				vuln.CVSSVector = nvdVuln.CVSSVector
+	// 1. Try NVD API for CVE-* IDs when configured, coordinated through the global rate limiter.
+	if vuln.CVEID != "" && strings.HasPrefix(vuln.CVEID, "CVE-") && s.NVDEnabled && s.CVEEnricher != nil {
+		if err := s.NVDLimiter.Wait(ctx); err == nil {
+			nvdVuln, err := s.CVEEnricher.QueryCVE(vuln.CVEID)
+			if err == nil && nvdVuln != nil {
+				vuln.CVETitle = nvdVuln.CVETitle
+				vuln.CVEDescription = nvdVuln.CVEDescription
+				if nvdVuln.CVESeverity != "" && nvdVuln.CVESeverity != types.Unknown {
+					vuln.CVESeverity = types.NormaliseSeverity(nvdVuln.CVESeverity)
+					vuln.Severity = vuln.CVESeverity
+				}
+				if nvdVuln.CVSSScore > 0 {
+					vuln.CVSSScore = nvdVuln.CVSSScore
+					vuln.CVSSVector = nvdVuln.CVSSVector
+				}
 			}
 		}
-
-		time.Sleep(600 * time.Millisecond)
 	}
 
 	// 2. If still no CVSS and it is a GHSA-*, try GitHub Security Advisories API.
-	if vuln.CVSSScore == 0 && strings.HasPrefix(vuln.ID, "GHSA-") && githubClient != nil {
-		ghsaVuln, err := githubClient.QueryGHSA(vuln.ID)
+	if vuln.CVSSScore == 0 && strings.HasPrefix(vuln.ID, "GHSA-") && s.GHSAEnricher != nil {
+		ghsaVuln, err := s.GHSAEnricher.QueryGHSA(vuln.ID)
 		if err == nil && ghsaVuln != nil && ghsaVuln.CVSSScore > 0 {
 			vuln.CVSSScore = ghsaVuln.CVSSScore
 			vuln.CVSSVector = ghsaVuln.CVSSVector
@@ -229,7 +219,7 @@ func enrichVulnerability(
 			if vuln.CVEDescription == "" {
 				vuln.CVEDescription = ghsaVuln.Description
 			}
-			if ghsaVuln.Severity != "" {
+			if ghsaVuln.Severity != "" && ghsaVuln.Severity != types.Unknown {
 				normalised := types.NormaliseSeverity(ghsaVuln.Severity)
 				vuln.Severity = normalised
 				vuln.CVESeverity = normalised
@@ -278,7 +268,6 @@ func scanGraph(
 	reporter ProgressReporter,
 	scanFn ScanFunc,
 ) *types.ScanResult {
-	// Sort node keys deterministically before queueing work.
 	nodeKeys := make([]string, 0, len(graph.Nodes))
 	for key := range graph.Nodes {
 		nodeKeys = append(nodeKeys, key)
@@ -288,6 +277,9 @@ func scanGraph(
 	nodesToScanList := make([]*types.DependencyNode, 0, len(graph.Nodes))
 	for _, key := range nodeKeys {
 		node := graph.Nodes[key]
+		if node.ScanStatus == types.StatusUnsupported {
+			continue
+		}
 		if lockType == lockfile.PnpmLock && node.Depth == -1 {
 			node.ScanStatus = types.StatusSkipped
 			continue
@@ -298,7 +290,9 @@ func scanGraph(
 		}
 		if strings.TrimSpace(node.Name) == "" || strings.TrimSpace(node.Version) == "" {
 			node.ScanStatus = types.StatusUnsupported
-			node.ScanError = "missing package name or version"
+			if node.ScanError == "" {
+				node.ScanError = "missing package name or version"
+			}
 			continue
 		}
 		nodesToScanList = append(nodesToScanList, node)
@@ -336,7 +330,6 @@ func scanGraph(
 				res.Node.Vulnerabilities = res.Vulns
 				totalVulns.Add(int32(len(res.Vulns)))
 
-				// Emit vulnerabilities to reporter only after final processing so TUI matches ScanResult.
 				if reporter != nil {
 					dependencyPath := graph.GetVulnerablePath(res.NodeKey)
 					for _, vuln := range res.Vulns {
@@ -361,7 +354,6 @@ func scanGraph(
 			Node:    node,
 			NodeKey: nodeKey,
 		}) {
-			// Context cancelled before submission: mark remaining nodes as failed.
 			node.ScanStatus = types.StatusFailed
 			if ctx.Err() != nil {
 				node.ScanError = ctx.Err().Error()
@@ -374,8 +366,6 @@ func scanGraph(
 	pool.Close()
 	<-doneCollecting
 
-	// Any node submitted to the pool that never produced a result (e.g. context cancelled mid-flight)
-	// must be recorded as failed rather than silently omitted.
 	for _, node := range nodesToScanList {
 		if node.ScanStatus == "" {
 			node.ScanStatus = types.StatusFailed
@@ -403,7 +393,6 @@ func buildScanResultFromGraph(projectPath, lockFile, lockHash string, graph *typ
 	for _, key := range nodeKeys {
 		node := graph.Nodes[key]
 
-		// Exclude orphaned pnpm nodes from the dependency list, but count them in skipped coverage.
 		if lockType == lockfile.PnpmLock && node.Depth == -1 {
 			coverage.TotalPackages++
 			coverage.SkippedPackages++
@@ -434,12 +423,16 @@ func buildScanResultFromGraph(projectPath, lockFile, lockHash string, graph *typ
 			})
 		}
 
+		children := append([]string(nil), node.Children...)
+		sort.Strings(children)
+
 		dep := types.Dependency{
 			Name:            node.Name,
 			Version:         node.Version,
 			Ecosystem:       lockType.Ecosystem(),
 			Type:            node.Type,
 			Direct:          node.Direct,
+			DependsOn:       children,
 			ReleasedAt:      node.ReleasedAt,
 			ScanStatus:      node.ScanStatus,
 			ScanError:       node.ScanError,
@@ -484,17 +477,37 @@ func buildScanResultFromGraph(projectPath, lockFile, lockHash string, graph *typ
 	return result
 }
 
-// buildGraphFromDeps constructs a DependencyGraph from flat Dependencies for lockfiles without native graph support.
+// buildGraphFromDeps constructs a DependencyGraph from flat Dependencies for lock files without native graph support.
 func buildGraphFromDeps(deps *lockfile.Dependencies, ecosystem types.Ecosystem) *types.DependencyGraph {
 	graph := types.NewDependencyGraph()
 	graph.Ecosystem = ecosystem
 
-	for name, version := range deps.Production {
-		node := graph.AddNode(name, version, types.Production, true)
+	prodNames := make([]string, 0, len(deps.Production))
+	for name := range deps.Production {
+		prodNames = append(prodNames, name)
+	}
+	sort.Strings(prodNames)
+	for _, name := range prodNames {
+		node := graph.AddNode(name, deps.Production[name], types.Production, true)
 		graph.Root = append(graph.Root, node.Name+"@"+node.Version)
 	}
-	for name, version := range deps.Development {
-		node := graph.AddNode(name, version, types.Development, true)
+
+	devNames := make([]string, 0, len(deps.Development))
+	for name := range deps.Development {
+		devNames = append(devNames, name)
+	}
+	sort.Strings(devNames)
+	for _, name := range devNames {
+		node := graph.AddNode(name, deps.Development[name], types.Development, true)
+		graph.Root = append(graph.Root, node.Name+"@"+node.Version)
+	}
+
+	// Surface unresolved manifest entries (e.g. Maven BOM/parent-inherited versions) explicitly
+	// as StatusUnsupported rather than silently dropping them.
+	for _, name := range deps.Unresolved {
+		node := graph.AddNode(name, "", types.Production, true)
+		node.ScanStatus = types.StatusUnsupported
+		node.ScanError = "unresolved dependency version (inherited from external parent or BOM)"
 		graph.Root = append(graph.Root, node.Name+"@"+node.Version)
 	}
 

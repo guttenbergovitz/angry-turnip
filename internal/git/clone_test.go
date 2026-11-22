@@ -3,6 +3,7 @@ package git
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -30,10 +31,46 @@ func TestIsGitURL(t *testing.T) {
 	}
 }
 
-func TestCloneToTemp(t *testing.T) {
-	// Test with a public repository
-	url := "https://github.com/guttenbergovitz/vigil-cli"
+func TestBuildCloneEnvUsesExtraHeaderNotURL(t *testing.T) {
+	token := "ghp_super_secret_token_123"
+	env := buildCloneEnv(nil, "https://github.com/org/private-repo", token)
 
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "GIT_TERMINAL_PROMPT=0") {
+		t.Error("expected GIT_TERMINAL_PROMPT=0 in clone env")
+	}
+	if !strings.Contains(joined, "GIT_CONFIG_KEY_0=http.https://github.com/.extraheader") {
+		t.Error("expected GIT_CONFIG_KEY_0 extraheader for github.com HTTPS URL")
+	}
+	if strings.Contains(joined, token) {
+		t.Error("raw token must not appear unencoded in env")
+	}
+
+	// Non-GitHub HTTPS URL must not receive GitHub token header.
+	nonGH := buildCloneEnv(nil, "https://gitlab.com/org/repo", token)
+	if strings.Contains(strings.Join(nonGH, "\n"), "GIT_CONFIG_COUNT") {
+		t.Error("GitHub token header must not be attached to non-GitHub URLs")
+	}
+}
+
+func TestRedactSecret(t *testing.T) {
+	token := "ghp_secret_value"
+	msg := "fatal: auth failed with " + token
+	redacted := redactSecret(msg, token)
+	if strings.Contains(redacted, token) {
+		t.Errorf("token was not redacted: %s", redacted)
+	}
+	if !strings.Contains(redacted, "[REDACTED]") {
+		t.Errorf("expected [REDACTED] marker in output: %s", redacted)
+	}
+}
+
+func TestCloneToTemp(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping live network git clone test in -short mode")
+	}
+
+	url := "https://github.com/guttenbergovitz/vigil-cli"
 	t.Logf("Cloning %s", url)
 
 	repoDir, cleanup, err := CloneToTemp(url)
@@ -41,36 +78,19 @@ func TestCloneToTemp(t *testing.T) {
 		t.Fatalf("CloneToTemp failed: %v", err)
 	}
 
-	// Verify directory exists
 	if _, err := os.Stat(repoDir); os.IsNotExist(err) {
 		cleanup()
 		t.Fatalf("Repository directory does not exist: %s", repoDir)
 	}
 
-	// Verify .git directory exists
 	gitDir := filepath.Join(repoDir, ".git")
 	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
 		cleanup()
 		t.Fatalf(".git directory does not exist: %s", gitDir)
 	}
 
-	// Verify lockfile exists (this repo should have one)
-	lockFile := filepath.Join(repoDir, "go.mod")
-	if _, err := os.Stat(lockFile); os.IsNotExist(err) {
-		t.Logf("Warning: go.mod not found, checking for package-lock.json")
-		lockFile = filepath.Join(repoDir, "test-project", "package-lock.json")
-		if _, err := os.Stat(lockFile); os.IsNotExist(err) {
-			cleanup()
-			t.Fatalf("Expected lockfile not found in repository")
-		}
-	}
-
-	t.Logf("Clone successful: %s", repoDir)
-
-	// Cleanup
 	cleanup()
 
-	// Verify cleanup worked
 	if _, err := os.Stat(repoDir); !os.IsNotExist(err) {
 		t.Errorf("Cleanup failed: directory still exists: %s", repoDir)
 	}

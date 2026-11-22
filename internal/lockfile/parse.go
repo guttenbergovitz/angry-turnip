@@ -12,10 +12,11 @@ import (
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
 
-// Dependencies holds parsed production and development dependencies.
+// Dependencies holds parsed production, development, and unresolved dependencies.
 type Dependencies struct {
 	Production  map[string]string
 	Development map[string]string
+	Unresolved  []string
 }
 
 // ParseNPMLock parses npm package-lock.json format.

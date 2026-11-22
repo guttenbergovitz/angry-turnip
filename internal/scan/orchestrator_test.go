@@ -130,3 +130,53 @@ func TestScanGraphDoesNotDropPreReleaseDisclosedVulnsAndCountsUnknownSeverity(t 
 		t.Errorf("reporter received %d vulns, want %d (must match final ScanResult)", len(reporter.vulns), result.TotalVulns)
 	}
 }
+
+func TestBuildGraphFromDepsPreservesUnresolvedAsUnsupported(t *testing.T) {
+	deps := &lockfile.Dependencies{
+		Production: map[string]string{"org.apache.logging.log4j:log4j-core": "2.14.1"},
+		Unresolved: []string{"org.springframework.boot:spring-boot-starter-web"},
+	}
+
+	graph := buildGraphFromDeps(deps, types.EcosystemMaven)
+	result := scanGraph(
+		context.Background(),
+		"/tmp/java-app",
+		"pom.xml",
+		"hash",
+		graph,
+		lockfile.PomXml,
+		false,
+		nil,
+		func(_ context.Context, _ *types.DependencyNode, _ string) ([]types.Vulnerability, error) {
+			return nil, nil
+		},
+	)
+
+	if result.Coverage.ScannedPackages != 1 {
+		t.Errorf("ScannedPackages = %d, want 1", result.Coverage.ScannedPackages)
+	}
+	if result.Coverage.UnsupportedPackages != 1 {
+		t.Errorf("UnsupportedPackages = %d, want 1", result.Coverage.UnsupportedPackages)
+	}
+}
+
+func TestRateLimiterHonoursIntervalAndCancellation(t *testing.T) {
+	limiter := NewRateLimiter(20 * time.Millisecond)
+
+	start := time.Now()
+	if err := limiter.Wait(context.Background()); err != nil {
+		t.Fatalf("first Wait returned error: %v", err)
+	}
+	if err := limiter.Wait(context.Background()); err != nil {
+		t.Fatalf("second Wait returned error: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 15*time.Millisecond {
+		t.Errorf("expected at least ~20ms elapsed between ticks, got %v", elapsed)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := limiter.Wait(ctx); err == nil {
+		t.Error("expected Wait with cancelled context to return error")
+	}
+}

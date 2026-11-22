@@ -35,6 +35,7 @@ type Dependency struct {
 	Ecosystem       Ecosystem         // Package manager ecosystem (npm, PyPI, Go, Cargo, etc.)
 	Type            DependencyType    // Production or development classification
 	Direct          bool              // Whether declared directly or pulled in transitively
+	DependsOn       []string          // Canonical "name@version" keys of direct child dependencies
 	ReleasedAt      *time.Time        // Package release date (informational metadata only)
 	ScanStatus      PackageScanStatus // Explicit scan outcome for this package
 	ScanError       string            // Error message when ScanStatus is StatusFailed

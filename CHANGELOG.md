@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-22
+
+### Added
+
+- **Dependency-graph SBOM relationships and deterministic output**
+  - CycloneDX v1.5 exports now include `bom-ref` identifiers and a full `dependencies` relationship graph (reconstructed from `ScanResult.Dependencies[].DependsOn` even when exporting from `.vigil.cache`).
+  - SPDX v2.3 exports now include root application package entries and `DESCRIBES` / `DEPENDS_ON` relationships.
+  - Added deterministic alphabetical ordering for components, packages, and dependency edges across SBOM and scan results.
+- **Orchestrator dependency injection and global NVD rate limiter**
+  - Introduced `scan.Scanner` with narrow consumer-side interfaces (`VulnerabilitySource`, `CVEEnricher`, `GHSAEnricher`, `ReleaseDateFetcher`) and `scan.RateLimiter` to coordinate NVD requests globally across concurrent workers.
+- **GitHub Actions CI workflow**
+  - Added `.github/workflows/ci.yml` running `go vet ./...`, `go test -short -race ./...`, and `go build ./cmd/vigil` on Go 1.27.
+
+### Changed
+
+- **Improved Maven `pom.xml` resolution and transparency**
+  - Added support for local `<dependencyManagement>` and `<parent>` / `${project.version}` / `${project.groupId}` property resolution.
+  - Recorded dependencies with externally inherited versions (external parent POM or BOM) in `Dependencies.Unresolved` and surfaced them as `StatusUnsupported` in `ScanCoverage` instead of silently skipping them.
+- **Hardened remote git repository cloning**
+  - Replaced URL token injection with `GIT_CONFIG_*` `extraheader` environment variables, `GIT_TERMINAL_PROMPT=0`, `exec.CommandContext` timeout enforcement, and secret redaction in error output.
+
+### Fixed
+
+- **Fixed SBOM specification compliance bugs**
+  - Generated valid RFC 4122 UUID v4 `serialNumber` values for CycloneDX instead of `urn:uuid:vigil-<timestamp>`.
+  - Used dynamic `version.Get()` instead of hardcoded `1.1.0` in SBOM tool metadata.
+  - Added Maven PURL support (`pkg:maven/<groupId>/<artifactId>@<version>`) in `buildPurl`.
+  - Appended deterministic SHA-256 hash suffixes to SPDX package identifiers to prevent `SPDXID` collisions.
+- **Preserved `Unknown` severity across OSV, NVD, and GitHub clients**
+  - Stopped defaulting missing upstream severity fields to `Medium` in `internal/osv`, `internal/nvd`, and `internal/github`.
+
 ## [2.0.0] - 2026-11-22
 
 ### Breaking Changes
@@ -271,7 +302,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release gate recommendations
 - CI/CD integration with configurable failure thresholds
 
-[Unreleased]: https://github.com/guttenbergovitz/vigil-cli/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/guttenbergovitz/vigil-cli/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.1.0
 [2.0.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v2.0.0
 [1.6.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v1.6.0
 [1.1.0]: https://github.com/guttenbergovitz/vigil-cli/releases/tag/v1.1.0

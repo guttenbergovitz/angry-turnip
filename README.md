@@ -25,7 +25,7 @@ vigil report
 
 - **Multi-ecosystem SCA scanning** - JavaScript/TypeScript, Python, Rust, PHP, Go, and Java projects
 - **Secret Scanning** - Detect hardcoded AWS keys, GitHub tokens, Slack webhooks, SSH keys, and DB credentials using regex and Shannon entropy analysis
-- **Software Bill of Materials (SBOM)** - Export industry-standard **CycloneDX v1.5** and **SPDX v2.3** JSON formats
+- **Software Bill of Materials (SBOM)** - Export deterministic **CycloneDX v1.5** and **SPDX v2.3** JSON documents with full dependency graph relationships, RFC 4122 UUIDs, and collision-resistant SPDX identifiers
 - **Licence Compliance** - Categorise licences into Permissive (MIT, Apache) vs Copyleft (GPL, AGPL) risk levels
 - **Container & IaC Security** - Audit Dockerfiles and GitHub Actions workflows for security misconfigurations
 - **Remote repository scanning** - Scan GitHub, Bitbucket, and other git repositories directly without cloning manually
@@ -200,7 +200,8 @@ Ensures every vulnerability has a CVSS score for accurate risk assessment.
 - **Python**: `uv.lock` (uv), `poetry.lock` (Poetry), `Pipfile.lock` (Pipenv), `requirements.txt` (pip)
 - **Rust**: `Cargo.lock` (Cargo)
 - **PHP**: `composer.lock` (Composer)
-- **Go**: `go.mod` (Go modules)
+- **Go**: `go.mod` (Go modules via `golang.org/x/mod/modfile`)
+- **Java / Kotlin**: `pom.xml` (Maven — direct declarations, local `<properties>` and `<dependencyManagement>`; versions inherited from external parent POMs/BOMs are reported as `unsupported`), `gradle.lockfile` (Gradle)
 
 ## Contributing
 
