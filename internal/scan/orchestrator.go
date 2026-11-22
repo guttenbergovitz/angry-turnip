@@ -194,9 +194,13 @@ func Scan(ctx context.Context, absPath, lockFile string, lockType lockfile.LockF
 			reporter.Progress(int(scanned.Load()), nodesToScan, nodeKey, int(totalVulns.Load()))
 		}
 
-		// Query OSV API for this package
-		vulns, err := osvClient.QueryWithEcosystem(node.Name, node.Version, graph.Ecosystem)
+		// Query OSV API for this package with context timeout
+		queryCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+
+		vulns, err := osvClient.QueryWithEcosystemContext(queryCtx, node.Name, node.Version, graph.Ecosystem)
 		if err != nil {
+			// Log timeout/error but continue scanning
 			return nil, err
 		}
 

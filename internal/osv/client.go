@@ -2,6 +2,7 @@ package osv
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -98,8 +99,12 @@ func (c *Client) Query(pkg, version string) ([]types.Vulnerability, error) {
 
 // QueryWithEcosystem retrieves vulnerabilities for a package in a given ecosystem from OSV API.
 func (c *Client) QueryWithEcosystem(pkg, version string, ecosystem types.Ecosystem) ([]types.Vulnerability, error) {
+	return c.QueryWithEcosystemContext(context.Background(), pkg, version, ecosystem)
+}
+
+func (c *Client) QueryWithEcosystemContext(ctx context.Context, pkg, version string, ecosystem types.Ecosystem) ([]types.Vulnerability, error) {
 	req := QueryRequest{}
-	
+
 	purlType := "npm"
 	switch ecosystem {
 	case types.EcosystemPyPI:
@@ -129,11 +134,13 @@ func (c *Client) QueryWithEcosystem(pkg, version string, ecosystem types.Ecosyst
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	resp, err := c.httpClient.Post(
-		c.endpoint,
-		"application/json",
-		bytes.NewReader(reqBody),
-	)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.endpoint, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("query OSV: %w", err)
 	}
