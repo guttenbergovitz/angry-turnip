@@ -106,10 +106,17 @@ func parsePomXmlWithAncestors(data []byte, baseDir string) (*Dependencies, error
 			if parentGroup == "" && parentDoc.Parent != nil {
 				parentGroup = strings.TrimSpace(parentDoc.Parent.GroupID)
 			}
+			parentVer := strings.TrimSpace(parentDoc.Version)
+			if parentVer == "" && parentDoc.Parent != nil {
+				parentVer = strings.TrimSpace(parentDoc.Parent.Version)
+			}
 			if strings.TrimSpace(currParent.ArtifactID) != "" && strings.TrimSpace(parentDoc.ArtifactID) != strings.TrimSpace(currParent.ArtifactID) {
 				break
 			}
 			if strings.TrimSpace(currParent.GroupID) != "" && parentGroup != "" && parentGroup != strings.TrimSpace(currParent.GroupID) {
+				break
+			}
+			if strings.TrimSpace(currParent.Version) != "" && parentVer != "" && !propertyRegex.MatchString(parentVer) && parentVer != strings.TrimSpace(currParent.Version) {
 				break
 			}
 

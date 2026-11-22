@@ -585,6 +585,7 @@ func buildScanResultFromGraph(projectPath, lockFile, lockHash string, graph *typ
 
 	deps := make([]types.Dependency, 0, len(graph.Nodes))
 	var coverage types.ScanCoverage
+	coverage.ResolutionScope = resolutionScopeForLockType(lockType)
 
 	for _, key := range nodeKeys {
 		node := graph.Nodes[key]
@@ -672,6 +673,19 @@ func buildScanResultFromGraph(projectPath, lockFile, lockHash string, graph *typ
 	}
 
 	return result
+}
+
+func resolutionScopeForLockType(lockType lockfile.LockFileType) string {
+	switch lockType {
+	case lockfile.PomXml:
+		return "partial-pom"
+	case lockfile.GoModLock:
+		return "go-mod-manifest"
+	case lockfile.RequirementsTxt:
+		return "flat-manifest"
+	default:
+		return "full-lockfile"
+	}
 }
 
 // buildGraphFromDeps constructs a DependencyGraph from flat Dependencies for lock files without native graph support.

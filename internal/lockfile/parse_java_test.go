@@ -178,4 +178,18 @@ func TestParsePomXmlFileMultiModuleParentInheritance(t *testing.T) {
 	if got := deps.Production["io.netty:netty-handler"]; got != "4.1.94.Final" {
 		t.Errorf("expected child POM to inherit netty-handler 4.1.94.Final from parent, got %q (unresolved=%v)", got, deps.Unresolved)
 	}
+
+	// Mismatched parent version in local ../pom.xml must NOT be inherited.
+	mismatchedChild := strings.Replace(childPom, "<version>1.0.0</version>", "<version>9.9.9</version>", 1)
+	if err := os.WriteFile(childPomPath, []byte(mismatchedChild), 0644); err != nil {
+		t.Fatal(err)
+	}
+	depsMismatch, err := ParsePomXmlFile(childPomPath)
+	if err != nil {
+		t.Fatalf("ParsePomXmlFile error on mismatched parent version: %v", err)
+	}
+	if len(depsMismatch.Unresolved) != 1 || depsMismatch.Unresolved[0] != "io.netty:netty-handler" {
+		t.Errorf("expected mismatched parent version to leave netty-handler unresolved, got prod=%v unresolved=%v",
+			depsMismatch.Production, depsMismatch.Unresolved)
+	}
 }

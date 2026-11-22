@@ -1,18 +1,24 @@
 package lockfile
 
 import (
-	"bufio"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
 
+type cargoDep struct {
+	Name    string
+	Version string
+}
+
 type cargoPackage struct {
-	Name     string
-	Version  string
-	DepNames []string
+	Name    string
+	Version string
+	Deps    []cargoDep
 }
 
 // ParseCargoLock parses Rust Cargo.lock TOML format into Dependencies.
@@ -36,7 +42,8 @@ func ParseCargoLock(r io.Reader) (*Dependencies, error) {
 	return deps, nil
 }
 
-// ParseCargoLockGraph parses Rust Cargo.lock and builds a DependencyGraph with Cargo ecosystem metadata.
+// ParseCargoLockGraph parses Rust Cargo.lock and builds a DependencyGraph with Cargo ecosystem
+// metadata, resolving version-qualified edges deterministically when multiple crate versions exist.
 func ParseCargoLockGraph(r io.Reader) (*types.DependencyGraph, error) {
 	pkgs, err := parseCargoLockPackages(r)
 	if err != nil {
@@ -46,28 +53,41 @@ func ParseCargoLockGraph(r io.Reader) (*types.DependencyGraph, error) {
 	graph := types.NewDependencyGraph()
 	graph.Ecosystem = types.EcosystemCargo
 
-	// First pass: Add all crate nodes
+	nodesByName := make(map[string][]string)
+
 	for _, pkg := range pkgs {
-		name := strings.ToLower(pkg.Name)
-		graph.AddNode(name, pkg.Version, types.Production, false)
+		name := strings.ToLower(strings.TrimSpace(pkg.Name))
+		if name == "" {
+			continue
+		}
+		node := graph.AddNode(name, pkg.Version, types.Production, false)
+		key := node.Name + "@" + node.Version
+		nodesByName[name] = append(nodesByName[name], key)
+	}
+	for name := range nodesByName {
+		sort.Strings(nodesByName[name])
 	}
 
-	// Second pass: Add dependency edges
 	for _, pkg := range pkgs {
-		parentKey := strings.ToLower(pkg.Name) + "@" + pkg.Version
-		for _, depName := range pkg.DepNames {
-			depNameLower := strings.ToLower(depName)
-			// Match child crate in graph
-			for childKey, childNode := range graph.Nodes {
-				if childNode.Name == depNameLower {
-					graph.AddEdge(parentKey, childKey)
-					break
+		parentKey := strings.ToLower(strings.TrimSpace(pkg.Name)) + "@" + pkg.Version
+		for _, dep := range pkg.Deps {
+			depNameLower := strings.ToLower(strings.TrimSpace(dep.Name))
+			if depNameLower == "" {
+				continue
+			}
+			if dep.Version != "" {
+				exactKey := depNameLower + "@" + dep.Version
+				if _, ok := graph.Nodes[exactKey]; ok {
+					graph.AddEdge(parentKey, exactKey)
+					continue
 				}
+			}
+			for _, childKey := range nodesByName[depNameLower] {
+				graph.AddEdge(parentKey, childKey)
 			}
 		}
 	}
 
-	// Identify roots (nodes without parents)
 	childKeys := make(map[string]bool)
 	for _, node := range graph.Nodes {
 		for _, child := range node.Children {
@@ -81,72 +101,53 @@ func ParseCargoLockGraph(r io.Reader) (*types.DependencyGraph, error) {
 			graph.Root = append(graph.Root, key)
 		}
 	}
+	sort.Strings(graph.Root)
 
 	graph.CalculateDepths()
 	return graph, nil
 }
 
-// parseCargoLockPackages parses TOML content of Cargo.lock line by line.
+type cargoLockTOML struct {
+	Packages []struct {
+		Name         string   `toml:"name"`
+		Version      string   `toml:"version"`
+		Dependencies []string `toml:"dependencies"`
+	} `toml:"package"`
+}
+
+// parseCargoLockPackages parses Cargo.lock using a full TOML parser (github.com/BurntSushi/toml).
 func parseCargoLockPackages(r io.Reader) ([]cargoPackage, error) {
-	scanner := bufio.NewScanner(r)
-	var pkgs []cargoPackage
-	var current *cargoPackage
-	inDeps := false
+	var doc cargoLockTOML
+	if _, err := toml.NewDecoder(r).Decode(&doc); err != nil {
+		return nil, fmt.Errorf("decode Cargo.lock TOML: %w", err)
+	}
 
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
+	pkgs := make([]cargoPackage, 0, len(doc.Packages))
+	for _, rawPkg := range doc.Packages {
+		name := strings.TrimSpace(rawPkg.Name)
+		if name == "" {
 			continue
 		}
-
-		if line == "[[package]]" {
-			if current != nil && current.Name != "" {
-				pkgs = append(pkgs, *current)
-			}
-			current = &cargoPackage{}
-			inDeps = false
-			continue
-		}
-
-		if current == nil {
-			continue
-		}
-
-		if strings.HasPrefix(line, "dependencies = [") {
-			inDeps = true
-			continue
-		}
-
-		if inDeps {
-			if line == "]" {
-				inDeps = false
+		deps := make([]cargoDep, 0, len(rawPkg.Dependencies))
+		for _, depStr := range rawPkg.Dependencies {
+			parts := strings.Fields(strings.TrimSpace(depStr))
+			if len(parts) == 0 {
 				continue
 			}
-			// Extract dependency string e.g. "bytes" or "bytes 1.0.0"
-			cleanLine := strings.Trim(line, "\", ")
-			if cleanLine != "" {
-				parts := strings.Fields(cleanLine)
-				if len(parts) > 0 {
-					current.DepNames = append(current.DepNames, parts[0])
-				}
+			ver := ""
+			if len(parts) >= 2 && !strings.HasPrefix(parts[1], "(") {
+				ver = parts[1]
 			}
-			continue
+			deps = append(deps, cargoDep{
+				Name:    parts[0],
+				Version: ver,
+			})
 		}
-
-		if strings.HasPrefix(line, "name = \"") {
-			current.Name = extractStringValue(line)
-		} else if strings.HasPrefix(line, "version = \"") {
-			current.Version = extractStringValue(line)
-		}
+		pkgs = append(pkgs, cargoPackage{
+			Name:    name,
+			Version: strings.TrimSpace(rawPkg.Version),
+			Deps:    deps,
+		})
 	}
-
-	if current != nil && current.Name != "" {
-		pkgs = append(pkgs, *current)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-
 	return pkgs, nil
 }

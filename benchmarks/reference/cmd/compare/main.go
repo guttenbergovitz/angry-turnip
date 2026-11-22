@@ -30,7 +30,8 @@ type expectedFixture struct {
 type scannerRun struct {
 	Status        string          // "OK", "OK(COMPLETE)", "OK(PARTIAL)", "FAILED", "N/A"
 	TotalFindings int             // Deduplicated finding count reported by the scanner
-	Findings      map[string]bool // canonical "<CVE>|<PURL>" or "<ID>|<PURL>" (including aliases)
+	CanonicalKeys map[string]bool // Primary "<CANONICAL_ID>|<PURL>" per deduplicated finding
+	Findings      map[string]bool // All "<CVE_OR_ALIAS>|<PURL>" keys for recall and set-overlap matching
 }
 
 func main() {
@@ -65,9 +66,9 @@ func main() {
 		fmt.Printf("%-10s | %-24s | %-24s | %-24s | %-24s\n",
 			eco,
 			formatScore(vigilRun, expectedKeys),
-			formatScore(osvRun, expectedKeys),
-			formatScore(trivyRun, expectedKeys),
-			formatScore(grypeRun, expectedKeys),
+			formatScoreWithOverlap(osvRun, vigilRun, expectedKeys),
+			formatScoreWithOverlap(trivyRun, vigilRun, expectedKeys),
+			formatScoreWithOverlap(grypeRun, vigilRun, expectedKeys),
 		)
 	}
 }
@@ -87,6 +88,20 @@ func formatScore(run scannerRun, expected map[string]bool) string {
 		tot = len(run.Findings)
 	}
 	return fmt.Sprintf("%s (rec %d/%d, tot %d)", run.Status, hits, len(expected), tot)
+}
+
+func formatScoreWithOverlap(run, vigilRun scannerRun, expected map[string]bool) string {
+	base := formatScore(run, expected)
+	if !strings.HasPrefix(run.Status, "OK") || !strings.HasPrefix(vigilRun.Status, "OK") {
+		return base
+	}
+	shared := 0
+	for k := range vigilRun.CanonicalKeys {
+		if run.Findings[k] {
+			shared++
+		}
+	}
+	return fmt.Sprintf("%s [shared:%d]", base, shared)
 }
 
 func runVigil(fixtureDir string) scannerRun {
@@ -123,16 +138,21 @@ func runVigil(fixtureDir string) scannerRun {
 	}
 
 	findings := policy.BuildFindings(result)
-	keys := make(map[string]bool, len(findings))
+	canonical := make(map[string]bool, len(findings))
+	keys := make(map[string]bool, len(findings)*2)
 	for _, f := range findings {
+		id, purl, ok := strings.Cut(f.Key, "|")
+		if ok {
+			canonical[strings.ToUpper(id)+"|"+purl] = true
+		}
 		for _, k := range f.AllKeys() {
-			id, purl, ok := strings.Cut(k, "|")
-			if ok {
-				keys[strings.ToUpper(id)+"|"+purl] = true
+			aid, apurl, aok := strings.Cut(k, "|")
+			if aok {
+				keys[strings.ToUpper(aid)+"|"+apurl] = true
 			}
 		}
 	}
-	return scannerRun{Status: "OK(" + string(state) + ")", TotalFindings: len(findings), Findings: keys}
+	return scannerRun{Status: "OK(" + string(state) + ")", TotalFindings: len(findings), CanonicalKeys: canonical, Findings: keys}
 }
 
 func runOSVScanner(fixtureDir string, eco types.Ecosystem) scannerRun {

@@ -200,3 +200,40 @@ flask
 		t.Errorf("expected unpinned/range entries [flask urllib3] in Unresolved, got %v", deps.Unresolved)
 	}
 }
+
+func TestParseUVLockGraphDeterministicMultiVersionEdges(t *testing.T) {
+	// Two versions of urllib3 exist in the lockfile; app-a pins 1.26.4 via inline table version,
+	// confirming deterministic version-specific edge resolution across 20 runs.
+	content := `
+version = 1
+revision = 1
+
+[[package]]
+name = "app-a"
+version = "1.0.0"
+dependencies = [
+    { name = "urllib3", version = "1.26.4" },
+]
+
+[[package]]
+name = "urllib3"
+version = "2.0.7"
+
+[[package]]
+name = "urllib3"
+version = "1.26.4"
+`
+	for i := 0; i < 20; i++ {
+		graph, err := ParseUVLockGraph(strings.NewReader(content))
+		if err != nil {
+			t.Fatalf("ParseUVLockGraph error: %v", err)
+		}
+		appNode := graph.Nodes["app-a@1.0.0"]
+		if appNode == nil || len(appNode.Children) != 1 || appNode.Children[0] != "urllib3@1.26.4" {
+			t.Fatalf("iteration %d: expected app-a@1.0.0 to link exclusively to urllib3@1.26.4, got %+v", i, appNode)
+		}
+		if u2 := graph.Nodes["urllib3@2.0.7"]; u2 == nil || !u2.Direct {
+			t.Fatalf("iteration %d: expected unreferenced urllib3@2.0.7 to remain root, got %+v", i, u2)
+		}
+	}
+}

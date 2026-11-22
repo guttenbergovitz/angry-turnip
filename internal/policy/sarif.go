@@ -108,6 +108,83 @@ func WriteSARIF(out io.Writer, lockFile string, eval EvaluationResult) error {
 		})
 	}
 
+	// Emit explicit SARIF results for evidence, coverage, and baseline comparability failures
+	// so that a BLOCK or REVIEW caused by incomplete/invalid evidence is never invisible in
+	// GitHub Code Scanning when zero vulnerability findings were observed.
+	addDiagnosticResult := func(ruleID, shortDesc, level, text string, extraProps map[string]interface{}) {
+		if !seenRules[ruleID] {
+			seenRules[ruleID] = true
+			rules = append(rules, sarifRule{
+				ID:               ruleID,
+				Name:             ruleID,
+				ShortDescription: sarifMessage{Text: shortDesc},
+			})
+		}
+		results = append(results, sarifResult{
+			RuleID:  ruleID,
+			Level:   level,
+			Message: sarifMessage{Text: text},
+			Locations: []sarifLocation{
+				{
+					PhysicalLocation: sarifPhysicalLocation{
+						ArtifactLocation: sarifArtifactLocation{URI: lockFile},
+					},
+				},
+			},
+			Properties: extraProps,
+		})
+	}
+
+	switch eval.EvidenceState {
+	case EvidenceInvalid:
+		addDiagnosticResult(
+			"VIGIL-EVIDENCE-INVALID",
+			"Invalid or inconsistent scan coverage evidence",
+			"error",
+			fmt.Sprintf("[BLOCK] Scan evidence is INVALID (%s).", strings.Join(eval.EvidenceNotes, " ")),
+			map[string]interface{}{"decision": eval.OverallDecision, "evidence_state": eval.EvidenceState},
+		)
+	case EvidenceUnverified:
+		addDiagnosticResult(
+			"VIGIL-EVIDENCE-UNVERIFIED",
+			"Unverified scan scope (zero packages evaluated)",
+			"error",
+			fmt.Sprintf("[BLOCK] Scan evidence is UNVERIFIED (%s).", strings.Join(eval.EvidenceNotes, " ")),
+			map[string]interface{}{"decision": eval.OverallDecision, "evidence_state": eval.EvidenceState},
+		)
+	case EvidencePartial:
+		level := "warning"
+		if eval.ScanIncomplete {
+			level = "error"
+		}
+		addDiagnosticResult(
+			"VIGIL-SCAN-INCOMPLETE",
+			"Incomplete dependency scan coverage (failed or unsupported packages)",
+			level,
+			fmt.Sprintf("[%s] Scan coverage is PARTIAL (%d failed, %d unsupported package(s)). %s",
+				eval.OverallDecision, eval.FailedPackages, eval.UnsupportedPackages, strings.Join(eval.EvidenceNotes, " ")),
+			map[string]interface{}{
+				"decision":             eval.OverallDecision,
+				"evidence_state":       eval.EvidenceState,
+				"failed_packages":      eval.FailedPackages,
+				"unsupported_packages": eval.UnsupportedPackages,
+			},
+		)
+	}
+
+	if eval.BaselineScopeCompatible != nil && !*eval.BaselineScopeCompatible {
+		addDiagnosticResult(
+			"VIGIL-BASELINE-INCOMPATIBLE",
+			"Baseline scan configuration is incompatible with current scan",
+			"warning",
+			"[REVIEW] Baseline configuration fingerprint mismatch; baseline rejected for delta comparison.",
+			map[string]interface{}{
+				"decision":                  eval.OverallDecision,
+				"baseline_scope_compatible": false,
+			},
+		)
+	}
+
 	doc := map[string]interface{}{
 		"$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
 		"version": "2.1.0",

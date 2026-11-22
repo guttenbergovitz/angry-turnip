@@ -90,6 +90,7 @@ type FindingDecision struct {
 type EvaluationResult struct {
 	OverallDecision         Decision                   `json:"overall_decision"`
 	EvidenceState           EvidenceState              `json:"evidence_state"`
+	ResolutionScope         string                     `json:"resolution_scope,omitempty"`
 	EvidenceNotes           []string                   `json:"evidence_notes,omitempty"`
 	ThreatIntel             *types.ThreatIntelMetadata `json:"threat_intel,omitempty"`
 	BaselineScopeCompatible *bool                      `json:"baseline_scope_compatible,omitempty"`
@@ -352,6 +353,14 @@ func ValidateEvidence(result *types.ScanResult) (EvidenceState, []string) {
 	}
 
 	var notes []string
+	switch c.ResolutionScope {
+	case "partial-pom":
+		notes = append(notes, "Resolution scope: partial POM resolution (direct declarations and local parent POMs only; transitive Maven dependencies are not resolved without a lockfile).")
+	case "go-mod-manifest":
+		notes = append(notes, "Resolution scope: go.mod module requirement graph (static modfile analysis without full Go toolchain MVS build list).")
+	case "flat-manifest":
+		notes = append(notes, "Resolution scope: flat requirements.txt manifest (direct pinned requirements only; transitive dependencies are not declared).")
+	}
 	if c.FailedPackages > 0 {
 		notes = append(notes, fmt.Sprintf("%d package(s) failed vulnerability lookup.", c.FailedPackages))
 	}
@@ -392,6 +401,7 @@ func Evaluate(result *types.ScanResult, pol Policy, baseline *Baseline, now time
 	baselineIncompatible := false
 
 	if result != nil {
+		eval.ResolutionScope = result.Coverage.ResolutionScope
 		eval.FailedPackages = result.Coverage.FailedPackages
 		eval.UnsupportedPackages = result.Coverage.UnsupportedPackages
 		eval.ScopeExclusions = result.Coverage.SkippedPackages

@@ -119,7 +119,11 @@ type PackageScanError struct {
 }
 
 // ScanCoverage summarises how completely dependencies were evaluated during a scan.
+// ResolutionScope records whether the input was a full transitive lock file ("full-lockfile"),
+// a Go module requirement manifest ("go-mod-manifest"), a partial Maven POM ("partial-pom"),
+// or a flat requirements manifest ("flat-manifest").
 type ScanCoverage struct {
+	ResolutionScope     string `json:"resolution_scope,omitempty"`
 	TotalPackages       int
 	ScannedPackages     int
 	FailedPackages      int

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.1] - 2026-11-22
+
+### Fixed
+
+- **Full TOML Parsing & Deterministic Multi-Version Edge Resolution (`internal/lockfile`)**
+  - Replaced line-by-line TOML scanning for `uv.lock`, `poetry.lock`, and `Cargo.lock` with `github.com/BurntSushi/toml`.
+  - Replaced unordered map iteration in `buildPythonGraph` and `ParseCargoLockGraph` with deterministic `(name, version)` edge resolution (matching exact dependency version pins first and falling back to sorted candidate versions), eliminating arbitrary version selection when multiple versions of a package exist.
+- **Explicit `ResolutionScope` & Maven Parent Version Verification (`internal/lockfile`, `internal/policy`, `internal/scan`)**
+  - Added `ResolutionScope` (`full-lockfile`, `go-mod-manifest`, `partial-pom`, `flat-manifest`) to `ScanCoverage` and `EvaluationResult` with explicit `EvidenceNotes` so `EvidenceState = COMPLETE` on a manifest-only file (`pom.xml`, `go.mod`, `requirements.txt`) is never conflated with full transitive lockfile resolution.
+  - Added parent `<version>` verification in `parsePomXmlWithAncestors` so local parent POMs with mismatched versions are never inherited.
+- **SARIF Diagnostic Results for Incomplete / Invalid Evidence (`internal/policy/sarif.go`)**
+  - Emitted explicit SARIF `results` and `rules` (`VIGIL-EVIDENCE-INVALID`, `VIGIL-EVIDENCE-UNVERIFIED`, `VIGIL-SCAN-INCOMPLETE`, `VIGIL-BASELINE-INCOMPATIBLE`) whenever evidence completeness or baseline comparability fails, ensuring `BLOCK` or `REVIEW` decisions with zero vulnerability findings are never invisible in GitHub Code Scanning.
+- **Set-Intersection Benchmark Metric & Scope Documentation (`benchmarks/reference/`)**
+  - Added canonical finding set-intersection (`[shared:N]`) reporting to `benchmarks/reference/cmd/compare` and refined `benchmarks/reference/RESULTS.md` to distinguish controlled fixture parity and input format support from universal scanner equivalence.
+
 ## [2.6.0] - 2026-11-22
 
 ### Added

@@ -874,4 +874,28 @@ func TestWriteSARIFMapsDecisionsAndProvenance(t *testing.T) {
 	if !strings.Contains(out, `"version": "2.1.0"`) || !strings.Contains(out, `"level": "error"`) || !strings.Contains(out, `"level": "warning"`) {
 		t.Errorf("expected SARIF 2.1.0 output with error and warning levels, got:\n%s", out)
 	}
+
+	// Even when 0 vulnerability findings exist, an incomplete or unverified scan that blocks CI
+	// must emit a non-empty SARIF result (VIGIL-SCAN-INCOMPLETE / VIGIL-EVIDENCE-UNVERIFIED).
+	partialRes := &types.ScanResult{
+		LockFile: "pom.xml",
+		Coverage: types.ScanCoverage{
+			ResolutionScope:     "partial-pom",
+			TotalPackages:       2,
+			ScannedPackages:     1,
+			UnsupportedPackages: 1,
+		},
+		Dependencies: []types.Dependency{
+			{Name: "a:b", Version: "1.0.0", Ecosystem: types.EcosystemMaven, ScanStatus: types.StatusScanned},
+			{Name: "c:d", Version: "", Ecosystem: types.EcosystemMaven, ScanStatus: types.StatusUnsupported},
+		},
+	}
+	partialEval := Evaluate(partialRes, DefaultPolicy(), nil, time.Now().UTC())
+	var partialBuf bytes.Buffer
+	if err := WriteSARIF(&partialBuf, "pom.xml", partialEval); err != nil {
+		t.Fatalf("WriteSARIF error on partial scan: %v", err)
+	}
+	if !strings.Contains(partialBuf.String(), "VIGIL-SCAN-INCOMPLETE") {
+		t.Errorf("expected SARIF output for incomplete scan to contain VIGIL-SCAN-INCOMPLETE result, got:\n%s", partialBuf.String())
+	}
 }

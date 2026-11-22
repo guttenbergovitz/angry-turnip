@@ -9,17 +9,23 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/guttenbergovitz/vigil-cli/internal/types"
 )
 
+// pythonDep represents a dependency reference with an optional exact version pin.
+type pythonDep struct {
+	Name    string
+	Version string
+}
+
 // pythonPackage holds metadata parsed from Python TOML/JSON lock files.
 type pythonPackage struct {
-	Name         string            `json:"name"`
-	Version      string            `json:"version"`
-	Category     string            `json:"category"`
-	Dev          bool              `json:"dev"`
-	Dependencies map[string]string `json:"dependencies"`
-	DepNames     []string          `json:"dep_names"`
+	Name     string      `json:"name"`
+	Version  string      `json:"version"`
+	Category string      `json:"category"`
+	Dev      bool        `json:"dev"`
+	Deps     []pythonDep `json:"deps"`
 }
 
 // ParseUVLock parses uv.lock TOML format into Dependencies.
@@ -69,31 +75,50 @@ func buildPythonGraph(pkgs []pythonPackage) *types.DependencyGraph {
 	graph := types.NewDependencyGraph()
 	graph.Ecosystem = types.EcosystemPyPI
 
-	// First pass: Add all package nodes
+	// Index all resolved node keys per package name in sorted order so edge resolution
+	// is 100% deterministic even when multiple versions of the same package exist.
+	nodesByName := make(map[string][]string)
+
 	for _, pkg := range pkgs {
-		name := strings.ToLower(pkg.Name)
+		name := strings.ToLower(strings.TrimSpace(pkg.Name))
+		if name == "" {
+			continue
+		}
 		depType := types.Production
 		if pkg.Dev || pkg.Category == "dev" {
 			depType = types.Development
 		}
-		graph.AddNode(name, pkg.Version, depType, false)
+		node := graph.AddNode(name, pkg.Version, depType, false)
+		key := node.Name + "@" + node.Version
+		nodesByName[name] = append(nodesByName[name], key)
+	}
+	for name := range nodesByName {
+		sort.Strings(nodesByName[name])
 	}
 
-	// Second pass: Add edges for dependencies
+	// Second pass: resolve dependency edges by exact (name, version) first, falling back
+	// to deterministically sorted candidate versions for that package name.
 	for _, pkg := range pkgs {
-		parentKey := strings.ToLower(pkg.Name) + "@" + pkg.Version
-		for _, depName := range pkg.DepNames {
-			depNameLower := strings.ToLower(depName)
-			for childKey, childNode := range graph.Nodes {
-				if childNode.Name == depNameLower {
-					graph.AddEdge(parentKey, childKey)
-					break
+		parentKey := strings.ToLower(strings.TrimSpace(pkg.Name)) + "@" + pkg.Version
+		for _, dep := range pkg.Deps {
+			depNameLower := strings.ToLower(strings.TrimSpace(dep.Name))
+			if depNameLower == "" {
+				continue
+			}
+			if dep.Version != "" {
+				exactKey := depNameLower + "@" + dep.Version
+				if _, ok := graph.Nodes[exactKey]; ok {
+					graph.AddEdge(parentKey, exactKey)
+					continue
 				}
+			}
+			for _, childKey := range nodesByName[depNameLower] {
+				graph.AddEdge(parentKey, childKey)
 			}
 		}
 	}
 
-	// Identify root nodes (nodes without parents)
+	// Identify root nodes (nodes without parents) in deterministic order.
 	childKeys := make(map[string]bool)
 	for _, node := range graph.Nodes {
 		for _, child := range node.Children {
@@ -113,75 +138,83 @@ func buildPythonGraph(pkgs []pythonPackage) *types.DependencyGraph {
 	return graph
 }
 
-// parseUVLockPackages parses TOML content of uv.lock line by line.
+type uvLockTOML struct {
+	Packages []struct {
+		Name            string           `toml:"name"`
+		Version         string           `toml:"version"`
+		Dev             bool             `toml:"dev"`
+		Dependencies    []any            `toml:"dependencies"`
+		DevDependencies map[string][]any `toml:"dev-dependencies"`
+	} `toml:"package"`
+}
+
+// parseUVLockPackages parses uv.lock using a full TOML parser (github.com/BurntSushi/toml).
 func parseUVLockPackages(r io.Reader) ([]pythonPackage, error) {
-	scanner := bufio.NewScanner(r)
-	var pkgs []pythonPackage
-	var current *pythonPackage
-	inDeps := false
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		if line == "[[package]]" {
-			if current != nil {
-				pkgs = append(pkgs, *current)
-			}
-			current = &pythonPackage{}
-			inDeps = false
-			continue
-		}
-
-		if current == nil {
-			continue
-		}
-
-		if strings.HasPrefix(line, "dependencies = [") {
-			inDeps = true
-			continue
-		}
-
-		if inDeps {
-			if line == "]" {
-				inDeps = false
-				continue
-			}
-			// Extract dependency name from `{ name = "foo" }` or `"foo"`
-			if idx := strings.Index(line, "name = \""); idx >= 0 {
-				rest := line[idx+len("name = \""):]
-				if endIdx := strings.Index(rest, "\""); endIdx >= 0 {
-					current.DepNames = append(current.DepNames, rest[:endIdx])
-				}
-			} else if strings.HasPrefix(line, "\"") {
-				rest := line[1:]
-				if endIdx := strings.Index(rest, "\""); endIdx >= 0 {
-					current.DepNames = append(current.DepNames, rest[:endIdx])
-				}
-			}
-			continue
-		}
-
-		if strings.HasPrefix(line, "name = \"") {
-			current.Name = extractStringValue(line)
-		} else if strings.HasPrefix(line, "version = \"") {
-			current.Version = extractStringValue(line)
-		} else if line == "dev = true" {
-			current.Dev = true
-		}
+	var doc uvLockTOML
+	if _, err := toml.NewDecoder(r).Decode(&doc); err != nil {
+		return nil, fmt.Errorf("decode uv.lock TOML: %w", err)
 	}
 
-	if current != nil {
-		pkgs = append(pkgs, *current)
+	devReferenced := make(map[string]bool)
+	prodReferenced := make(map[string]bool)
+
+	pkgs := make([]pythonPackage, 0, len(doc.Packages))
+	for _, rawPkg := range doc.Packages {
+		deps := parseTOMLDepArray(rawPkg.Dependencies)
+		for _, d := range deps {
+			prodReferenced[strings.ToLower(d.Name)] = true
+		}
+		for _, groupDeps := range rawPkg.DevDependencies {
+			parsedDev := parseTOMLDepArray(groupDeps)
+			for _, d := range parsedDev {
+				devReferenced[strings.ToLower(d.Name)] = true
+			}
+			deps = append(deps, parsedDev...)
+		}
+		pkgs = append(pkgs, pythonPackage{
+			Name:    strings.TrimSpace(rawPkg.Name),
+			Version: strings.TrimSpace(rawPkg.Version),
+			Dev:     rawPkg.Dev,
+			Deps:    deps,
+		})
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, err
+	for i := range pkgs {
+		lower := strings.ToLower(pkgs[i].Name)
+		if !pkgs[i].Dev && devReferenced[lower] && !prodReferenced[lower] {
+			pkgs[i].Dev = true
+		}
 	}
 
 	return pkgs, nil
+}
+
+func parseTOMLDepArray(items []any) []pythonDep {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]pythonDep, 0, len(items))
+	for _, item := range items {
+		switch v := item.(type) {
+		case map[string]any:
+			name, _ := v["name"].(string)
+			ver, _ := v["version"].(string)
+			if strings.TrimSpace(name) != "" {
+				out = append(out, pythonDep{
+					Name:    strings.TrimSpace(name),
+					Version: strings.TrimSpace(ver),
+				})
+			}
+		case string:
+			parts := strings.Fields(strings.TrimSpace(v))
+			if len(parts) == 1 {
+				out = append(out, pythonDep{Name: parts[0]})
+			} else if len(parts) >= 2 {
+				out = append(out, pythonDep{Name: parts[0], Version: parts[1]})
+			}
+		}
+	}
+	return out
 }
 
 // ParsePoetryLock parses poetry.lock TOML format into Dependencies.
@@ -208,71 +241,60 @@ func ParsePoetryLock(r io.Reader) (*Dependencies, error) {
 	return deps, nil
 }
 
-// parsePoetryLockPackages parses TOML content of poetry.lock line by line.
+type poetryLockTOML struct {
+	Packages []struct {
+		Name         string         `toml:"name"`
+		Version      string         `toml:"version"`
+		Category     string         `toml:"category"`
+		Groups       []string       `toml:"groups"`
+		Dependencies map[string]any `toml:"dependencies"`
+	} `toml:"package"`
+}
+
+// parsePoetryLockPackages parses poetry.lock using a full TOML parser (github.com/BurntSushi/toml).
 func parsePoetryLockPackages(r io.Reader) ([]pythonPackage, error) {
-	scanner := bufio.NewScanner(r)
-	var pkgs []pythonPackage
-	var current *pythonPackage
-	inDepsSection := false
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		if line == "[[package]]" {
-			if current != nil {
-				pkgs = append(pkgs, *current)
-			}
-			current = &pythonPackage{Dependencies: make(map[string]string)}
-			inDepsSection = false
-			continue
-		}
-
-		if current == nil {
-			continue
-		}
-
-		if line == "[package.dependencies]" {
-			inDepsSection = true
-			continue
-		} else if strings.HasPrefix(line, "[") {
-			inDepsSection = false
-		}
-
-		if inDepsSection {
-			parts := strings.SplitN(line, "=", 2)
-			if len(parts) == 2 {
-				depName := strings.TrimSpace(parts[0])
-				current.DepNames = append(current.DepNames, depName)
-			}
-			continue
-		}
-
-		if strings.HasPrefix(line, "name = \"") {
-			current.Name = extractStringValue(line)
-		} else if strings.HasPrefix(line, "version = \"") {
-			current.Version = extractStringValue(line)
-		} else if strings.HasPrefix(line, "category = \"") {
-			current.Category = extractStringValue(line)
-			if current.Category == "dev" {
-				current.Dev = true
-			}
-		} else if strings.HasPrefix(line, "groups = [") {
-			// Poetry 1.5+ uses groups = ["dev"] / ["test"] instead of category = "dev"
-			if !strings.Contains(line, "\"main\"") && (strings.Contains(line, "\"dev\"") || strings.Contains(line, "\"test\"")) {
-				current.Dev = true
-			}
-		}
+	var doc poetryLockTOML
+	if _, err := toml.NewDecoder(r).Decode(&doc); err != nil {
+		return nil, fmt.Errorf("decode poetry.lock TOML: %w", err)
 	}
 
-	if current != nil {
-		pkgs = append(pkgs, *current)
-	}
+	pkgs := make([]pythonPackage, 0, len(doc.Packages))
+	for _, rawPkg := range doc.Packages {
+		isDev := strings.EqualFold(rawPkg.Category, "dev")
+		if !isDev && len(rawPkg.Groups) > 0 {
+			hasMain := false
+			hasDevOrTest := false
+			for _, g := range rawPkg.Groups {
+				if strings.EqualFold(g, "main") {
+					hasMain = true
+				}
+				if strings.EqualFold(g, "dev") || strings.EqualFold(g, "test") {
+					hasDevOrTest = true
+				}
+			}
+			if !hasMain && hasDevOrTest {
+				isDev = true
+			}
+		}
 
-	if err := scanner.Err(); err != nil {
-		return nil, err
+		depKeys := make([]string, 0, len(rawPkg.Dependencies))
+		for k := range rawPkg.Dependencies {
+			depKeys = append(depKeys, k)
+		}
+		sort.Strings(depKeys)
+
+		deps := make([]pythonDep, 0, len(depKeys))
+		for _, k := range depKeys {
+			deps = append(deps, pythonDep{Name: strings.TrimSpace(k)})
+		}
+
+		pkgs = append(pkgs, pythonPackage{
+			Name:     strings.TrimSpace(rawPkg.Name),
+			Version:  strings.TrimSpace(rawPkg.Version),
+			Category: strings.TrimSpace(rawPkg.Category),
+			Dev:      isDev,
+			Deps:     deps,
+		})
 	}
 
 	return pkgs, nil
@@ -382,18 +404,4 @@ func ParseRequirementsTxt(r io.Reader) (*Dependencies, error) {
 	}
 
 	return deps, nil
-}
-
-// Helper to extract string between double quotes e.g. name = "foo" -> foo
-func extractStringValue(line string) string {
-	idx := strings.Index(line, "\"")
-	if idx < 0 {
-		return ""
-	}
-	rest := line[idx+1:]
-	endIdx := strings.Index(rest, "\"")
-	if endIdx < 0 {
-		return ""
-	}
-	return rest[:endIdx]
 }
