@@ -266,3 +266,95 @@ func TestTUIGroupingIncludesUnknownAndProtectsHeadersAndCtrlCCancels(t *testing.
 		t.Error("expected ctrl+c to invoke cancelFunc")
 	}
 }
+
+func TestTUIV2ObservableStagesDefaultAllFindingsPerSecretRevealAnd80x24Layout(t *testing.T) {
+	m := NewModel()
+	m.SetTargetMetadata("~/work/service", "package-lock.json")
+
+	// 1. Emit observable stage events and verify Scan View renders stages & workers without mutating table.
+	tot := 10
+	m.Update(StageEventMsg{
+		Stage:   "sca",
+		Status:  "running",
+		Current: 4,
+		Total:   &tot,
+		Queued:  4,
+		Active:  2,
+		Workers: 16,
+		Message: "Querying lodash@4.17.20",
+	})
+	scanView := m.View()
+	if !strings.Contains(scanView, "Workers: 16") || !strings.Contains(scanView, "4/10 processed") {
+		t.Errorf("expected scan view to display real worker count and stage queue stats, got:\n%s", scanView)
+	}
+
+	// 2. Verify Medium, Low, and Unknown findings are visible by default (not hidden by Critical+High filter)
+	// and Dependency Graph tab is populated from result.Graph.
+	g := types.NewDependencyGraph()
+	g.Ecosystem = types.EcosystemNPM
+	g.AddNode("express", "4.18.2", types.Production, true)
+	g.Root = []string{"express@4.18.2"}
+	g.CalculateDepths()
+
+	res := &types.ScanResult{
+		LockFile: "package-lock.json",
+		Graph:    g,
+		Coverage: types.ScanCoverage{TotalPackages: 1, ScannedPackages: 1},
+		Dependencies: []types.Dependency{
+			{
+				Name:       "express",
+				Version:    "4.18.2",
+				Ecosystem:  types.EcosystemNPM,
+				Type:       types.Production,
+				Direct:     true,
+				ScanStatus: types.StatusScanned,
+				Vulnerabilities: []types.Vulnerability{
+					{ID: "CVE-2026-5000", Severity: types.Medium, CVSSScore: 5.3, Summary: "Medium issue"},
+					{ID: "GHSA-0000-0000-0001", Severity: types.Unknown, Summary: "Unknown severity issue"},
+				},
+			},
+		},
+		TotalVulns:   2,
+		MediumVulns:  1,
+		UnknownVulns: 1,
+	}
+
+	secList := []secrets.SecretFinding{
+		{FilePath: "a.env", LineNumber: 1, Type: secrets.AWSKey, Match: "AKIA1111111111111111", Entropy: 4.5},
+		{FilePath: "b.env", LineNumber: 2, Type: secrets.AWSKey, Match: "AKIA2222222222222222", Entropy: 4.5},
+	}
+
+	m.Update(DoneMsg{Result: res, Secrets: secList})
+	if len(m.filteredItems) != 2 {
+		t.Fatalf("expected both Medium and Unknown findings visible by default, got %d", len(m.filteredItems))
+	}
+
+	// 3. Per-item secret reveal ('r'): revealing secret #1 must NOT reveal secret #2.
+	m.switchToTab(TabSecrets)
+	if len(m.filteredItems) != 2 {
+		t.Fatalf("expected 2 secrets, got %d", len(m.filteredItems))
+	}
+	m.handleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if !strings.Contains(m.filteredItems[0].Description, "AKIA1111111111111111") {
+		t.Errorf("expected first secret to be revealed after pressing 'r'")
+	}
+	if strings.Contains(m.filteredItems[1].Description, "AKIA2222222222222222") {
+		t.Errorf("expected second secret to remain masked when only first secret was revealed")
+	}
+
+	// 4. Verify Dependency Graph tab [5] is populated from result.Graph (never empty).
+	m.switchToTab(TabDependencyGraph)
+	if len(m.filteredItems) != 1 || m.filteredItems[0].Package != "express" {
+		t.Errorf("expected Dependency Graph tab to show express node from result.Graph, got %+v", m.filteredItems)
+	}
+
+	// 5. Verify 80x24, 120x35, and 160x45 terminal sizes render cleanly with visible navigation.
+	m.switchToTab(TabVulnerabilities)
+	for _, size := range []struct{ w, h int }{{80, 24}, {120, 35}, {160, 45}} {
+		m.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
+		view := m.View()
+		if !strings.Contains(view, "Quit") || !strings.Contains(view, "DECISION:") {
+			t.Errorf("terminal %dx%d missing header or footer navigation:\n%s", size.w, size.h, view)
+		}
+	}
+}

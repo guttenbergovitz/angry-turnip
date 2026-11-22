@@ -186,6 +186,7 @@ type ScanResult struct {
 	LockFileHash  string // SHA-256 hash for cache invalidation
 	SkipDevDeps   bool   // Whether development dependencies were excluded from scope
 	Dependencies  []Dependency
+	Graph         *DependencyGraph `json:"-"` // In-memory resolved dependency graph for TUI & path inspection
 	Coverage      ScanCoverage
 	Resolution    ResolutionEvidence `json:"resolution"`
 	ThreatIntel   ThreatIntelMetadata

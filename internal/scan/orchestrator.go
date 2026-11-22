@@ -144,6 +144,28 @@ func (s *Scanner) Scan(ctx context.Context, absPath, lockFile string, lockType l
 		return nil, fmt.Errorf("%s", errMsg)
 	}
 
+	totalNodes := len(graph.Nodes)
+	emitStage(reporter, ScanEvent{
+		Stage:   StageDiscovery,
+		Status:  StageCompleted,
+		Current: totalNodes,
+		Total:   intPtr(totalNodes),
+		Message: fmt.Sprintf("Discovered %d components in %s (%s)", totalNodes, lockFile, graph.Ecosystem),
+	})
+
+	resStatus := StageCompleted
+	if len(graph.Unresolved) > 0 || len(graph.Ambiguous) > 0 || lockType == lockfile.PomXml || lockType == lockfile.GoModLock || lockType == lockfile.RequirementsTxt {
+		resStatus = StagePartial
+	}
+	emitStage(reporter, ScanEvent{
+		Stage:   StageResolution,
+		Status:  resStatus,
+		Current: totalNodes - len(graph.Unresolved),
+		Total:   intPtr(totalNodes),
+		Message: fmt.Sprintf("%d resolved, %d unresolved, %d ambiguous edges", totalNodes-len(graph.Unresolved), len(graph.Unresolved), len(graph.Ambiguous)),
+	})
+
+	var enrichedCount atomic.Int32
 	scanFn := func(ctx context.Context, node *types.DependencyNode, nodeKey string) ([]types.Vulnerability, error) {
 		queryCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
@@ -163,13 +185,30 @@ func (s *Scanner) Scan(ctx context.Context, absPath, lockFile string, lockType l
 
 		for j := range vulns {
 			s.enrichVulnerability(ctx, &vulns[j], node)
+			enrichedCount.Add(1)
 		}
 
 		return vulns, nil
 	}
 
 	result := scanGraph(ctx, absPath, lockFile, lockHash, graph, lockType, skipDevDeps, reporter, scanFn)
-	s.enrichThreatIntel(ctx, result)
+	if enrichedCount.Load() > 0 {
+		emitStage(reporter, ScanEvent{
+			Stage:   StageEnrichment,
+			Status:  StageCompleted,
+			Current: int(enrichedCount.Load()),
+			Total:   intPtr(int(enrichedCount.Load())),
+			Message: fmt.Sprintf("Enriched %d advisory records (NVD=%v, GHSA=enabled)", enrichedCount.Load(), s.NVDEnabled),
+		})
+	} else {
+		emitStage(reporter, ScanEvent{
+			Stage:   StageEnrichment,
+			Status:  StageSkipped,
+			Message: "No advisories required NVD/GHSA enrichment",
+		})
+	}
+
+	s.enrichThreatIntelWithReporter(ctx, result, reporter)
 
 	if reporter != nil {
 		reporter.Done(result)
@@ -260,6 +299,10 @@ func (s *Scanner) enrichVulnerability(ctx context.Context, vuln *types.Vulnerabi
 // independent per-source timeouts and explicit provenance statuses. Failures never degrade
 // scan coverage or drop vulnerabilities, and are never conflated with negative lookups.
 func (s *Scanner) enrichThreatIntel(ctx context.Context, result *types.ScanResult) {
+	s.enrichThreatIntelWithReporter(ctx, result, nil)
+}
+
+func (s *Scanner) enrichThreatIntelWithReporter(ctx context.Context, result *types.ScanResult, reporter ProgressReporter) {
 	if result == nil {
 		return
 	}
@@ -270,6 +313,11 @@ func (s *Scanner) enrichThreatIntel(ctx context.Context, result *types.ScanResul
 	}
 
 	if s.KEVEnricher == nil && s.EPSSEnricher == nil {
+		emitStage(reporter, ScanEvent{
+			Stage:   StageThreatIntel,
+			Status:  StageSkipped,
+			Message: "Threat intelligence enrichers not configured",
+		})
 		return
 	}
 
@@ -286,6 +334,11 @@ func (s *Scanner) enrichThreatIntel(ctx context.Context, result *types.ScanResul
 		}
 	}
 	if len(cveSet) == 0 {
+		emitStage(reporter, ScanEvent{
+			Stage:   StageThreatIntel,
+			Status:  StageSkipped,
+			Message: "No CVE identifiers discovered (0 threat-intel queries needed)",
+		})
 		return
 	}
 
@@ -294,6 +347,14 @@ func (s *Scanner) enrichThreatIntel(ctx context.Context, result *types.ScanResul
 		cveIDs = append(cveIDs, id)
 	}
 	sort.Strings(cveIDs)
+
+	emitStage(reporter, ScanEvent{
+		Stage:   StageThreatIntel,
+		Status:  StageRunning,
+		Current: 0,
+		Total:   intPtr(len(cveIDs)),
+		Message: fmt.Sprintf("Querying CISA KEV and FIRST EPSS for %d CVE(s)", len(cveIDs)),
+	})
 
 	// Shared overall budget with independent per-source timeouts so a slow source
 	// cannot starve the other source.
@@ -431,6 +492,27 @@ func (s *Scanner) enrichThreatIntel(ctx context.Context, result *types.ScanResul
 			}
 		}
 	}
+
+	tiStatus := StageCompleted
+	var tiErr string
+	if kevErr != nil && epssErr != nil {
+		tiStatus = StageFailed
+		tiErr = fmt.Sprintf("KEV: %v; EPSS: %v", kevErr, epssErr)
+	} else if kevErr != nil {
+		tiStatus = StagePartial
+		tiErr = fmt.Sprintf("KEV lookup failed: %v", kevErr)
+	} else if epssErr != nil {
+		tiStatus = StagePartial
+		tiErr = fmt.Sprintf("EPSS lookup failed: %v", epssErr)
+	}
+	emitStage(reporter, ScanEvent{
+		Stage:   StageThreatIntel,
+		Status:  tiStatus,
+		Current: len(cveIDs),
+		Total:   intPtr(len(cveIDs)),
+		Message: fmt.Sprintf("Checked %d CVE(s) against CISA KEV (%s) and FIRST EPSS (%s)", len(cveIDs), result.ThreatIntel.KEV.Status, result.ThreatIntel.EPSS.Status),
+		Error:   tiErr,
+	})
 }
 
 func canonicalCVEID(v *types.Vulnerability) string {
@@ -495,20 +577,57 @@ func scanGraph(
 	}
 
 	nodesToScan := len(nodesToScanList)
+	skippedCount := 0
+	for _, key := range nodeKeys {
+		if graph.Nodes[key].ScanStatus == types.StatusSkipped {
+			skippedCount++
+		}
+	}
 
+	numWorkers := getWorkerCount()
 	if reporter != nil {
 		reporter.Progress(0, nodesToScan, "Starting scan...", 0)
 	}
+	emitStage(reporter, ScanEvent{
+		Stage:   StageSCA,
+		Status:  StageRunning,
+		Current: 0,
+		Total:   intPtr(nodesToScan),
+		Queued:  nodesToScan,
+		Skipped: skippedCount,
+		Workers: numWorkers,
+		Message: fmt.Sprintf("Scanning %d package(s) across %d worker(s)", nodesToScan, numWorkers),
+	})
 
 	var totalVulns atomic.Int32
 	var processed atomic.Int32
+	var activeWorkers atomic.Int32
+	var failedCount atomic.Int32
 	var resultMu sync.Mutex
 
-	numWorkers := getWorkerCount()
 	pool := NewWorkerPool(ctx, numWorkers, func(ctx context.Context, node *types.DependencyNode, nodeKey string) ([]types.Vulnerability, error) {
-		if reporter != nil {
-			reporter.Progress(int(processed.Load()), nodesToScan, nodeKey, int(totalVulns.Load()))
+		act := int(activeWorkers.Add(1))
+		defer activeWorkers.Add(-1)
+		done := int(processed.Load())
+		queued := nodesToScan - done - act
+		if queued < 0 {
+			queued = 0
 		}
+		if reporter != nil {
+			reporter.Progress(done, nodesToScan, nodeKey, int(totalVulns.Load()))
+		}
+		emitStage(reporter, ScanEvent{
+			Stage:   StageSCA,
+			Status:  StageRunning,
+			Current: done,
+			Total:   intPtr(nodesToScan),
+			Queued:  queued,
+			Active:  act,
+			Failed:  int(failedCount.Load()),
+			Skipped: skippedCount,
+			Workers: numWorkers,
+			Message: "Querying " + nodeKey,
+		})
 		return scanFn(ctx, node, nodeKey)
 	})
 
@@ -520,6 +639,7 @@ func scanGraph(
 			if res.Error != nil {
 				res.Node.ScanStatus = types.StatusFailed
 				res.Node.ScanError = res.Error.Error()
+				failedCount.Add(1)
 			} else {
 				res.Node.ScanStatus = types.StatusScanned
 				res.Node.ScanError = ""
@@ -534,10 +654,27 @@ func scanGraph(
 				}
 			}
 
-			current := processed.Add(1)
-			if reporter != nil {
-				reporter.Progress(int(current), nodesToScan, res.NodeKey, int(totalVulns.Load()))
+			current := int(processed.Add(1))
+			act := int(activeWorkers.Load())
+			queued := nodesToScan - current - act
+			if queued < 0 {
+				queued = 0
 			}
+			if reporter != nil {
+				reporter.Progress(current, nodesToScan, res.NodeKey, int(totalVulns.Load()))
+			}
+			emitStage(reporter, ScanEvent{
+				Stage:   StageSCA,
+				Status:  StageRunning,
+				Current: current,
+				Total:   intPtr(nodesToScan),
+				Queued:  queued,
+				Active:  act,
+				Failed:  int(failedCount.Load()),
+				Skipped: skippedCount,
+				Workers: numWorkers,
+				Message: "Completed " + res.NodeKey,
+			})
 			resultMu.Unlock()
 		}
 	}()
@@ -572,6 +709,23 @@ func scanGraph(
 			}
 		}
 	}
+
+	scaStatus := StageCompleted
+	if failedCount.Load() > 0 {
+		scaStatus = StagePartial
+	}
+	emitStage(reporter, ScanEvent{
+		Stage:   StageSCA,
+		Status:  scaStatus,
+		Current: int(processed.Load()),
+		Total:   intPtr(nodesToScan),
+		Queued:  0,
+		Active:  0,
+		Failed:  int(failedCount.Load()),
+		Skipped: skippedCount,
+		Workers: numWorkers,
+		Message: fmt.Sprintf("Evaluated %d package(s), %d failed, %d skipped", processed.Load(), failedCount.Load(), skippedCount),
+	})
 
 	return buildScanResultFromGraph(projectPath, lockFile, lockHash, graph, lockType, skipDevDeps)
 }
@@ -649,6 +803,7 @@ func buildScanResultFromGraph(projectPath, lockFile, lockHash string, graph *typ
 		LockFileHash: lockHash,
 		SkipDevDeps:  skipDevDeps,
 		Dependencies: deps,
+		Graph:        graph,
 		Coverage:     coverage,
 		Resolution:   resolution,
 	}

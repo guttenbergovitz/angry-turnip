@@ -1,87 +1,86 @@
-# Interactive DevSecOps Dashboard (TUI)
+# Interactive Security Assessment TUI
 
-Vigil includes a productivity-focused terminal dashboard designed for fast security auditing and vulnerability triage.
+Vigil includes an interactive terminal assessment view built on Bubble Tea, designed for observable multi-stage scanning and explainable policy triage.
 
 ```
-🛡️ VIGIL DEVSECOPS DASHBOARD | 14 VULNS | 2 SECRETS | 1 IAC RISKS
-[1] Vulns (SCA)  [2] Secrets  [3] IaC Security  [4] Licenses  [5] Dep Graph
-●CRIT ●HIGH ○MED ○LOW | Findings: 14 | Hidden: 0
-╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
-│  Security Findings (Enter to expand details)                                                    │
-│ DOMAIN  SEVERITY   TARGET / PACKAGE           ID / RULE         REASON SUMMARY                  │
-│─────────────────────────────────────────────────────────────────────────────────────────────────│
-│ SCA     CRITICAL   lodash@4.17.20             CVE-2021-23337    Prototype pollution...          │
-│ SCA     HIGH       axios@0.21.1               CVE-2021-3749     SSRF vulnerability...           │
-│ SECRET  HIGH       .env                       AWS_ACCESS_KEY    Hardcoded AWS key...            │
-╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
- [↑/↓] Navigate | [Enter] Details | [y] Copy | [x/X] Mark Fixed | [1-5] Tab | [c/h/m/l] Filter | [/] Search | [e] Export | [q] Quit
+VIGIL / ASSESSMENT | DECISION: BLOCK | EVIDENCE: COMPLETE | RESOLUTION: COMPLETE | Coverage: 247/247
+[1] Findings (SCA)  [2] Secrets (0)  [3] IaC (0)  [4] Licences (247)  [5] Dep Graph  [o] Overview  [i] Evidence
+BLOCK: 2 · REVIEW: 8 · ALLOW: 26 (Accepted: 1) | Showing: 36
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  Findings (Enter to inspect decision & provenance)                                                   │
+│ DECISION    DOMAIN    SEVERITY    COMPONENT                 ID / RULE           SIGNAL & REASON      │
+│──────────────────────────────────────────────────────────────────────────────────────────────────────│
+│ BLOCK       SCA       CRITICAL    log4j-core@2.14.1         CVE-2021-44228      [KEV] Matched rule...│
+│ REVIEW      SCA       HIGH        example-lib@1.4.0         CVE-2026-0001       [NEW] Require rev... │
+│ ACCEPTED    SCA       MEDIUM      legacy-lib@0.9.0          CVE-2025-1111       [Accepted risk] ...  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ [↑/↓/j/k] Move | [Enter] Details | [/] Search | [f] Filter | [s] Sort | [g] Group | [x/X/v] Hide/Restore | [r] Reveal Secret | [e] Export | [?] Help | [q] Quit
 ```
-
-**Smart Defaults**: Starts with Critical+High filter only. Press `a` to show all severities.
 
 ---
 
-## 📐 Layout Architecture
+## Observable Scan Pipeline
 
-**Single-Pane Focus**: Full-screen findings table optimized for speed.
+During scanning (`StateScanning`), Vigil displays live status across all nine assessment stages rather than a single global percentage:
 
-- **Table View**: All findings in sortable 5-column layout (`DOMAIN`, `SEVERITY`, `TARGET`, `ID/RULE`, `REASON`)
-- **Detail Expansion**: Press `Enter` to toggle detail pane below selected finding (Package info, Reason, Dependency chain, Remediation)
-- **Visual Filter Badges**: Active severity filters shown as colored badges (●CRIT ●HIGH ○MED ○LOW)
-- **Status Bar**: Context-aware keybindings always visible
+1. **Discover & parse** — lockfile/manifest discovery and component count
+2. **Dependency resolution** — resolved nodes, unresolved entries, and ambiguous multi-version edges
+3. **Vulnerability lookup** — live `processed`, `queued`, `active`, `failed`, and `skipped` counters with actual `VIGIL_WORKERS`
+4. **NVD / GHSA enrichment** — authoritative CVSS and severity enrichment
+5. **CISA KEV / FIRST EPSS** — parallel threat-intelligence enrichment
+6. **Secrets scan** — credential and high-entropy pattern detection
+7. **IaC / Container audit** — Dockerfile and CI workflow checks
+8. **Licence analysis** — SPDX licence extraction and obligation classification
+9. **Policy evaluation** — canonical finding deduplication and `ALLOW` / `REVIEW` / `BLOCK` evaluation
+
+Live findings shown during scanning are explicitly marked as **preliminary** until deduplication, enrichment, and policy evaluation finish.
 
 ---
 
-## ⌨️ Keybindings & Controls
-
-### Navigation
+## Views & Navigation
 
 | Key | Action |
 | --- | --- |
-| `↑` / `↓` / `k` / `j` | Navigate table rows |
-| `Enter` | Toggle detail pane expansion (collapsed by default) |
+| `↑` / `↓` / `k` / `j` | Move cursor in the active findings table |
+| `Enter` | Expand or collapse the full decision, provenance, dependency path, and missing-evidence pane |
+| `1` – `5` | Switch domain view (`Findings (SCA)`, `Secrets`, `IaC`, `Licences`, `Dep Graph`) |
+| `o` | Open **Assessment Overview** (overall decision, evidence & resolution completeness, coverage, threat-intel status) |
+| `i` | Open **Evidence & Pipeline Stages** (stage outcomes, unresolved/ambiguous dependencies, activity log) |
 
-### Quick Actions
+## Filtering, Sorting & Grouping
 
-| Key | Action |
-| --- | --- |
-| `y` | Copy CVE/Rule ID to clipboard |
-| `x` | Mark finding as fixed (hides from view) |
-| `X` | Unmark finding (unhide) |
-
-### Tabs (Security Domains)
-
-| Key | Domain | Content |
-| --- | --- | --- |
-| `1` | Vulns (SCA) | Software Composition Analysis vulnerabilities |
-| `2` | Secrets | Hardcoded AWS keys, PAT tokens, SSH keys, DB credentials |
-| `3` | IaC Security | Dockerfile & GitHub Actions security linting issues |
-| `4` | Licenses | Permissive vs Copyleft (GPL/AGPL) license risk analysis |
-| `5` | Dep Graph | Complete dependency graph nodes |
-
-### Filtering & Search
+By default, **all findings are shown** (including `Medium`, `Low`, and `Unknown` severity) and sorted by **Decision Priority** (`BLOCK` > `REVIEW` > `ACCEPTED` > `ALLOW`).
 
 | Key | Action |
 | --- | --- |
-| `c` | Filter: `CRITICAL` severity only |
-| `h` | Filter: `HIGH` severity only |
-| `m` | Filter: `MEDIUM` severity only |
-| `l` | Filter: `LOW` severity only |
-| `a` / `Esc` | Reset all filters and search (show all) |
-| `/` | Open live search prompt (filter by text) |
+| `/` | Live search by package, CVE/GHSA, PURL, policy decision, or summary |
+| `f` | Cycle quick filters (`All` → `BLOCK only` → `REVIEW only` → `CISA KEV only` → `Critical+High`) |
+| `s` | Cycle sort order (`Decision Priority` → `Severity` → `CVSS Score` → `Component Name`) |
+| `g` | Cycle grouping (`None` → `Package` → `Severity` → `Decision`) |
+| `C` / `H` / `M` / `L` | Filter by `Critical`, `High`, `Medium`, or `Low` severity |
+| `a` | Clear all active filters and search |
 
-**Smart Default**: TUI starts with Critical+High filter active. Visual badges show active filters.
-
-### Export & Quit
+## Triage Actions, Secret Safety & Export
 
 | Key | Action |
 | --- | --- |
-| `e` | Open Export Report Dialog (`JSON`, `CSV`, `Markdown`, `CycloneDX`, `SPDX`) |
-| `q` / `Ctrl+C` | Exit dashboard |
+| `y` | Copy selected CVE / advisory / rule ID to clipboard |
+| `x` | Hide or unhide the selected finding locally by canonical key (`ID\|PURL`) — never claims remediation |
+| `v` | Toggle viewing locally hidden findings so individual items can be inspected or unhidden |
+| `X` | Restore all locally hidden findings |
+| `r` | Reveal or mask **only the currently selected secret** (secrets are masked by default) |
+| `e` | Open Export Dialog (`JSON`, `CSV`, `Markdown`, `CycloneDX v1.5`, `SPDX v2.3`, **`SARIF v2.1.0`**) |
+| `?` | Context-aware keyboard shortcut help |
+| `q` / `Ctrl+C` | Quit (cancels active scan context) |
 
-## 🔧 Configuration
+## CLI Execution Modes
 
-**Worker Pool**: Control parallel scan performance via environment variable:
 ```bash
-VIGIL_WORKERS=20 vigil scan  # Default: 10, Max: 100
+vigil scan .                        # Interactive TUI (when stdout is a TTY)
+vigil scan . --no-tui               # Human-readable CLI summary
+vigil scan . --output json          # Machine-readable JSON on stdout (TUI auto-disabled)
+vigil scan . --output sarif         # Machine-readable SARIF 2.1.0 on stdout (TUI auto-disabled)
+vigil scan . --scope sca            # Run SCA only (skips Secrets, IaC, and Licences)
+vigil scan . --scope all            # Run all assessment stages (default)
+vigil scan . --progress plain       # Stream stage completion lines to stderr
 ```

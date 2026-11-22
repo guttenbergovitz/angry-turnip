@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-11-22
+
+### Added
+
+- **Observable Multi-Stage Scan Instrumentation (`internal/scan/events.go`, `internal/ui/scan_view.go`)**
+  - Added typed `ScanEvent` and `StageReporter` covering all nine pipeline stages (`discovery`, `resolution`, `sca`, `enrichment`, `threat-intel`, `secrets`, `iac`, `licences`, `policy`) with `pending`, `running`, `completed`, `partial`, `failed`, and `skipped` states.
+  - Replaced hardcoded `[1/4]` and `10 Parallel Workers` in the Scan View with live `processed`, `queued`, `active`, `failed`, and `skipped` counters, actual `VIGIL_WORKERS`, preliminary severity counts, and stage error reporting.
+- **TUI v2 Assessment Architecture (`internal/ui/scanner.go`, `internal/ui/scan_view.go`)**
+  - Added dedicated `DECISION` column (`BLOCK`, `REVIEW`, `ACCEPTED`, `ALLOW`) to the Findings table, separating formal risk acceptance via policy exception (`ACCEPTED`) from clean `ALLOW`.
+  - Changed default Findings filter to show **all findings** (including `Medium`, `Low`, and `Unknown`), sorted by Decision Priority (`BLOCK > REVIEW > ACCEPTED > ALLOW`), with quick filter presets (`[f]`), sort cycling (`[s]`), and decision grouping (`[g]`).
+  - Added dedicated **Assessment Overview** (`[o]`) and **Evidence & Pipeline Stages** (`[i]`) views, populated the **Dependency Graph** (`[5]`) tab directly from `ScanResult.Graph` (`DoneMsg.Graph`), and added **SARIF v2.1.0** (`[6]`) to the TUI Export dialog.
+  - Changed secret reveal (`[r]`) to operate strictly per selected secret finding rather than revealing all secrets globally.
+  - Removed legacy 4-pane viewport focus traps so `j/k` and `↑/↓` always navigate the active table, made `View()` a pure function of model state, and added responsive 80×24 layout support.
+- **Lockfile Licence Extraction & CLI `--scope` / `--progress` Controls (`internal/license`, `internal/cli/scan.go`)**
+  - Added `license.ExtractLockfileLicenses` to extract declared SPDX licence expressions from `package-lock.json` and `composer.lock`, and replaced alarmist licence descriptions with neutral obligation guidance.
+  - Added `--scope all|sca` and `--progress auto|plain|none` to `vigil scan`, and automatically disabled full-screen TUI when `--output` is specified or `stdout` is not a TTY.
+  - Updated `documentation/user-guide/tui.md` to match TUI v2 views, stages, and keyboard shortcuts.
+
 ## [2.7.1] - 2026-11-22
 
 ### Added

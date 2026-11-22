@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,10 +27,12 @@ import (
 func Scan(args []string) error {
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	skipDevDeps := fs.Bool("skip-devdeps", false, "Skip development dependencies")
-	outputFmt := fs.String("output", "", "Output format (json, csv, markdown)")
+	outputFmt := fs.String("output", "", "Output format (json, sarif, csv, markdown, cyclonedx, spdx)")
 	noTUI := fs.Bool("no-tui", false, "Disable interactive TUI (useful for CI/testing)")
 	customLockFile := fs.String("lockfile", "", "Explicitly specify lockfile name (e.g. uv.lock, requirements.txt)")
 	scanSecrets := fs.Bool("secrets", false, "Scan codebase for hardcoded secrets and leaked credentials")
+	scopeFlag := fs.String("scope", "all", "Scan scope: 'all' (SCA, Secrets, IaC, Licences) or 'sca' (SCA only)")
+	progressFlag := fs.String("progress", "auto", "Progress display mode: 'auto', 'plain' (on stderr), or 'none'")
 
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("parse flags: %w", err)
@@ -38,6 +41,19 @@ func Scan(args []string) error {
 	if fs.NArg() == 0 {
 		return fmt.Errorf("scan: missing project path argument")
 	}
+
+	scope := strings.ToLower(strings.TrimSpace(*scopeFlag))
+	if scope != "all" && scope != "sca" {
+		return fmt.Errorf("invalid --scope %q (allowed: all, sca)", *scopeFlag)
+	}
+	progressMode := strings.ToLower(strings.TrimSpace(*progressFlag))
+	if progressMode != "auto" && progressMode != "plain" && progressMode != "none" {
+		return fmt.Errorf("invalid --progress %q (allowed: auto, plain, none)", *progressFlag)
+	}
+
+	// Never launch full-screen Bubble Tea TUI when machine-readable --output is requested,
+	// when --progress plain/none is requested, or when stdout is not an interactive terminal.
+	useTUI := !*noTUI && *outputFmt == "" && progressMode == "auto" && isInteractiveTerminal(os.Stdout)
 
 	projectPath := fs.Arg(0)
 
@@ -90,13 +106,16 @@ func Scan(args []string) error {
 	var finalModel tea.Model
 	var reporter scan.ProgressReporter
 
-	if !*noTUI {
+	if useTUI {
 		// Create Bubbletea model for progress display with alt screen
 		model := ui.NewModel()
+		model.SetTargetMetadata(projectPath, lockFile)
 		model.SetCancelFunc(cancel) // Allow early quit to cancel scan
 		program = tea.NewProgram(model, tea.WithAltScreen())
 		reporter = &TUIAdapter{program: program}
-	} else if *outputFmt == "" {
+	} else if progressMode == "plain" {
+		reporter = &PlainStageReporter{out: os.Stderr}
+	} else if *outputFmt == "" && progressMode != "none" {
 		// Only print human status banner when machine-readable --output is not requested.
 		fmt.Println("Scanning...")
 	}
@@ -116,17 +135,72 @@ func Scan(args []string) error {
 			errorChan <- err
 			return
 		}
-		secList, _ = secrets.NewScanner().ScanDirectory(absPath)
-		iacList, _ = container.AuditProject(absPath)
-		licList = license.AnalyzeResultLicenses(result, nil)
-		if *scanSecrets || program != nil {
+
+		runSecondary := scope == "all" || *scanSecrets
+		if runSecondary {
+			emitCLIStage(reporter, scan.ScanEvent{Stage: scan.StageSecrets, Status: scan.StageRunning, Message: "Scanning codebase for leaked credentials"})
+			var secErr error
+			secList, secErr = secrets.NewScanner().ScanDirectory(absPath)
+			if secErr != nil {
+				emitCLIStage(reporter, scan.ScanEvent{Stage: scan.StageSecrets, Status: scan.StageFailed, Message: "Secrets scan failed", Error: secErr.Error()})
+			} else {
+				emitCLIStage(reporter, scan.ScanEvent{Stage: scan.StageSecrets, Status: scan.StageCompleted, Current: len(secList), Message: fmt.Sprintf("%d secret finding(s)", len(secList))})
+			}
+		} else {
+			emitCLIStage(reporter, scan.ScanEvent{Stage: scan.StageSecrets, Status: scan.StageSkipped, Message: "Skipped (--scope sca)"})
+		}
+
+		if scope == "all" {
+			emitCLIStage(reporter, scan.ScanEvent{Stage: scan.StageIaC, Status: scan.StageRunning, Message: "Auditing Dockerfiles and CI workflows"})
+			var iacErr error
+			iacList, iacErr = container.AuditProject(absPath)
+			if iacErr != nil {
+				emitCLIStage(reporter, scan.ScanEvent{Stage: scan.StageIaC, Status: scan.StageFailed, Message: "IaC audit failed", Error: iacErr.Error()})
+			} else {
+				emitCLIStage(reporter, scan.ScanEvent{Stage: scan.StageIaC, Status: scan.StageCompleted, Current: len(iacList), Message: fmt.Sprintf("%d IaC issue(s)", len(iacList))})
+			}
+
+			emitCLIStage(reporter, scan.ScanEvent{Stage: scan.StageLicences, Status: scan.StageRunning, Message: "Extracting package licence metadata"})
+			licMap := license.ExtractLockfileLicenses(lockFilePath)
+			licList = license.AnalyzeResultLicenses(result, licMap)
+			knownLic := 0
+			for _, l := range licList {
+				if l.Category != license.Unknown {
+					knownLic++
+				}
+			}
+			licStatus := scan.StageCompleted
+			if len(licList) > 0 && knownLic == 0 {
+				licStatus = scan.StagePartial
+			}
+			emitCLIStage(reporter, scan.ScanEvent{
+				Stage:   scan.StageLicences,
+				Status:  licStatus,
+				Current: knownLic,
+				Message: fmt.Sprintf("%d/%d package licence(s) identified from lockfile", knownLic, len(licList)),
+			})
+		} else {
+			emitCLIStage(reporter, scan.ScanEvent{Stage: scan.StageIaC, Status: scan.StageSkipped, Message: "Skipped (--scope sca)"})
+			emitCLIStage(reporter, scan.ScanEvent{Stage: scan.StageLicences, Status: scan.StageSkipped, Message: "Skipped (--scope sca)"})
+		}
+
+		if *scanSecrets || scope == "all" || program != nil {
 			result.SecretCount = len(secList)
 		}
+
+		emitCLIStage(reporter, scan.ScanEvent{Stage: scan.StagePolicy, Status: scan.StageRunning, Message: "Evaluating security policy"})
 		eval := policy.Evaluate(result, policy.DefaultPolicy(), nil, time.Now().UTC())
+		emitCLIStage(reporter, scan.ScanEvent{
+			Stage:   scan.StagePolicy,
+			Status:  scan.StageCompleted,
+			Message: fmt.Sprintf("Decision: %s (Evidence: %s)", eval.OverallDecision, eval.EvidenceState),
+		})
+
 		if program != nil {
 			program.Send(ui.DoneMsg{
 				Result:     result,
 				Evaluation: &eval,
+				Graph:      result.Graph,
 				Secrets:    secList,
 				IaC:        iacList,
 				Licenses:   licList,
@@ -136,7 +210,7 @@ func Scan(args []string) error {
 	}()
 
 	// Run TUI if enabled
-	if !*noTUI {
+	if useTUI {
 		var err error
 		finalModel, err = program.Run()
 		if err != nil {
@@ -326,4 +400,71 @@ func (t *TUIAdapter) Vulnerability(vuln types.Vulnerability, pkg string, path []
 func (t *TUIAdapter) Done(_ *types.ScanResult) {
 	// DoneMsg is sent by cli.Scan after all secondary scanners (Secrets, IaC, Licenses)
 	// and policy evaluation complete so the TUI never enters explorer mode with empty tabs.
+}
+
+func (t *TUIAdapter) OnStageEvent(ev scan.ScanEvent) {
+	if t.program != nil {
+		t.program.Send(ui.StageEventMsg{
+			Stage:     string(ev.Stage),
+			Status:    string(ev.Status),
+			Current:   ev.Current,
+			Total:     ev.Total,
+			Queued:    ev.Queued,
+			Active:    ev.Active,
+			Failed:    ev.Failed,
+			Skipped:   ev.Skipped,
+			Workers:   ev.Workers,
+			Message:   ev.Message,
+			Error:     ev.Error,
+			Timestamp: ev.Timestamp,
+		})
+	}
+}
+
+// PlainStageReporter writes concise stage progress lines to an io.Writer (typically os.Stderr).
+type PlainStageReporter struct {
+	out *os.File
+}
+
+func (p *PlainStageReporter) Error(msg string) {
+	if p.out != nil {
+		fmt.Fprintf(p.out, "[error] %s\n", msg)
+	}
+}
+
+func (p *PlainStageReporter) Progress(_, _ int, _ string, _ int) {}
+func (p *PlainStageReporter) Vulnerability(_ types.Vulnerability, _ string, _ []string) {}
+func (p *PlainStageReporter) Done(_ *types.ScanResult) {}
+
+func (p *PlainStageReporter) OnStageEvent(ev scan.ScanEvent) {
+	if p.out == nil {
+		return
+	}
+	if ev.Status == scan.StageCompleted || ev.Status == scan.StagePartial || ev.Status == scan.StageFailed || ev.Status == scan.StageSkipped {
+		line := fmt.Sprintf("[%s] %s: %s", ev.Status, ev.Stage, ev.Message)
+		if ev.Error != "" {
+			line += " (" + ev.Error + ")"
+		}
+		fmt.Fprintln(p.out, line)
+	}
+}
+
+func emitCLIStage(reporter scan.ProgressReporter, ev scan.ScanEvent) {
+	if sr, ok := reporter.(scan.StageReporter); ok {
+		if ev.Timestamp.IsZero() {
+			ev.Timestamp = time.Now().UTC()
+		}
+		sr.OnStageEvent(ev)
+	}
+}
+
+func isInteractiveTerminal(f *os.File) bool {
+	if f == nil {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (info.Mode() & os.ModeCharDevice) != 0
 }

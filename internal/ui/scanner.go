@@ -11,11 +11,9 @@ import (
 	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
-	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/guttenbergovitz/vigil-cli/internal/container"
 	"github.com/guttenbergovitz/vigil-cli/internal/export"
@@ -66,47 +64,51 @@ type VulnEntry struct {
 	DependencyPath []string
 }
 
-// Model represents the Lazygit/btm style Fullscreen DevSecOps TUI state.
+// Model represents the Vigil Security Assessment TUI state.
 type Model struct {
-	activeTab       ActiveTab
-	activePane      ActivePane
-	state           ViewState
-	isMaximized     bool
-	isDetailExpanded bool // true = show detail pane below table
-	progress        ScanProgress
-	startTime        time.Time
-	result           *types.ScanResult
-	evaluation       *policy.EvaluationResult
-	graph            *types.DependencyGraph
-	vulns            []VulnEntry
-	secretFindings   []secrets.SecretFinding
-	iacIssues        []container.SecurityIssue
-	licenseFindings  []license.LicenseFinding
-	filteredItems    []TUIFinding
-	markedFixed      map[string]bool // Canonical finding Key -> locally hidden in UI
-	showHidden       bool            // When true, display locally hidden items so they can be unhidden
-	revealSecrets    bool            // When false (default), secret values are masked
-	spinner          spinner.Model
-	progressBar     progress.Model
-	vulnTable       table.Model
-	reasonVP        viewport.Model
-	chainVP         viewport.Model
-	detailVP        viewport.Model
-	styles          Styles
-	width           int
-	height          int
-	selectedIdx     int
-	filterSeverity  string // "", "critical", "high", "medium", "low"
-	searchQuery     string
-	isSearching     bool
-	groupMode       GroupMode
-	exportFormat        string // "json", "csv", "markdown", "cyclonedx", "spdx"
+	activeTab           ActiveTab
+	activePane          ActivePane
+	state               ViewState
+	isMaximized         bool
+	isDetailExpanded    bool
+	projectPath         string
+	lockFileName        string
+	workerCount         int
+	stages              []StageState
+	progress            ScanProgress
+	startTime           time.Time
+	result              *types.ScanResult
+	evaluation          *policy.EvaluationResult
+	graph               *types.DependencyGraph
+	vulns               []VulnEntry
+	secretFindings      []secrets.SecretFinding
+	iacIssues           []container.SecurityIssue
+	licenseFindings     []license.LicenseFinding
+	filteredItems       []TUIFinding
+	markedFixed         map[string]bool // Canonical finding Key -> locally hidden
+	revealedSecrets     map[string]bool // Canonical secret Key -> explicitly revealed by user
+	showHidden          bool
+	spinner             spinner.Model
+	vulnTable           table.Model
+	styles              Styles
+	width               int
+	height              int
+	selectedIdx         int
+	filterSeverity      string // "" (default: show all findings) or comma-separated severities
+	quickFilter         string // "", "block", "review", "kev"
+	searchQuery         string
+	isSearching         bool
+	groupMode           GroupMode
+	sortMode            SortMode
 	exportStatus        string
-	tableReasonColWidth int
+	tableDecisionWidth  int
+	tableDomainWidth    int
+	tableSeverityWidth  int
 	tableTargetColWidth int
 	tableIDColWidth     int
+	tableReasonColWidth int
 	activityLogs        []string
-	cancelFunc          func() // Cancel scan context on early quit
+	cancelFunc          func()
 	mu                  sync.Mutex
 }
 
@@ -115,7 +117,7 @@ type ProgressMsg struct {
 	Progress ScanProgress
 }
 
-// VulnMsg adds a vulnerability entry.
+// VulnMsg adds a preliminary vulnerability entry during scanning.
 type VulnMsg struct {
 	Entry VulnEntry
 }
@@ -142,25 +144,26 @@ type ErrorMsg struct {
 }
 
 // NewModel initializes the TUI model.
+// Default filter is empty ("") so all findings (including Medium, Low, and Unknown) are visible
+// and sorted by policy decision priority (BLOCK > REVIEW > ALLOW).
 func NewModel() *Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#BD93F9"))
 
-	p := progress.New(progress.WithDefaultGradient())
-
 	columns := []table.Column{
-		{Title: "DOMAIN", Width: 10},
-		{Title: "SEVERITY", Width: 12},
-		{Title: "TARGET / PACKAGE", Width: 25},
-		{Title: "ID / RULE", Width: 20},
-		{Title: "REASON SUMMARY", Width: 35},
+		{Title: "DECISION", Width: 10},
+		{Title: "DOMAIN", Width: 8},
+		{Title: "SEVERITY", Width: 10},
+		{Title: "COMPONENT", Width: 24},
+		{Title: "ID / RULE", Width: 18},
+		{Title: "SIGNAL & REASON", Width: 34},
 	}
 
 	t := table.New(
 		table.WithColumns(columns),
 		table.WithFocused(true),
-		table.WithHeight(10),
+		table.WithHeight(12),
 	)
 
 	tStyle := table.DefaultStyles()
@@ -175,30 +178,34 @@ func NewModel() *Model {
 		Bold(true)
 	t.SetStyles(tStyle)
 
-	rVP := viewport.New(50, 10)
-	cVP := viewport.New(50, 10)
-	dVP := viewport.New(50, 10)
-
 	m := &Model{
 		activeTab:        TabVulnerabilities,
 		activePane:       PaneTable,
 		state:            StateScanning,
 		startTime:        time.Now(),
+		stages:           defaultStages(),
+		workerCount:      10,
 		markedFixed:      make(map[string]bool),
+		revealedSecrets:  make(map[string]bool),
 		spinner:          s,
-		progressBar:      p,
 		vulnTable:        t,
-		reasonVP:         rVP,
-		chainVP:          cVP,
-		detailVP:         dVP,
 		styles:           DefaultStyles(),
-		width:            140,
-		height:           40,
-		filterSeverity:   "critical,high", // Smart default: show Critical+High only
+		width:            120,
+		height:           35,
+		filterSeverity:   "", // Show all findings by default
+		sortMode:         SortDecisionPriority,
 		isDetailExpanded: false,
 	}
-	m.recalculateViewports()
+	m.recalculateLayoutLocked()
 	return m
+}
+
+// SetTargetMetadata records the scanned project path and lockfile name for the Scan header.
+func (m *Model) SetTargetMetadata(projectPath, lockFile string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.projectPath = projectPath
+	m.lockFileName = lockFile
 }
 
 // SetProgress updates scan progress state.
@@ -227,6 +234,9 @@ func (m *Model) SetDone(result *types.ScanResult, graph *types.DependencyGraph, 
 	if result != nil {
 		eval := policy.Evaluate(result, policy.DefaultPolicy(), nil, time.Now().UTC())
 		m.evaluation = &eval
+		if graph == nil && result.Graph != nil {
+			graph = result.Graph
+		}
 	}
 	m.graph = graph
 	m.secretFindings = secretsList
@@ -248,7 +258,6 @@ func (m *Model) SetCancelFunc(cancel func()) {
 	m.cancelFunc = cancel
 }
 
-// switchToTab changes active tab and resets view state.
 func (m *Model) switchToTab(tab ActiveTab) {
 	m.activeTab = tab
 	m.selectedIdx = 0
@@ -262,48 +271,52 @@ func (m *Model) Init() tea.Cmd {
 }
 
 func ticker() tea.Cmd {
-	return tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
 		return TickMsg{time: t}
 	})
 }
 
-// Update handles key presses, window resizing, and state transitions.
+// Update handles key presses, window resizing, and typed stage transitions.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKeyPress(msg)
 	case tea.WindowSizeMsg:
+		m.mu.Lock()
 		m.width = msg.Width
 		m.height = msg.Height
-		m.recalculateViewports()
-		m.updateTableLayout()
+		m.recalculateLayoutLocked()
+		m.mu.Unlock()
+		return m, nil
+	case StageEventMsg:
+		m.mu.Lock()
+		m.applyStageEventLocked(msg)
+		m.mu.Unlock()
 		return m, nil
 	case ProgressMsg:
 		m.mu.Lock()
 		m.progress = msg.Progress
 		if msg.Progress.CurrentPkg != "" && msg.Progress.CurrentPkg != "Starting scan..." {
 			timestamp := time.Now().Format("15:04:05")
-			logLine := fmt.Sprintf("  • [%s] ⚡ Scanned %s (%d/%d)", timestamp, msg.Progress.CurrentPkg, msg.Progress.Current, msg.Progress.Total)
+			logLine := fmt.Sprintf("  [%s] Scanned %s (%d/%d)", timestamp, msg.Progress.CurrentPkg, msg.Progress.Current, msg.Progress.Total)
 			m.activityLogs = append(m.activityLogs, logLine)
-			if len(m.activityLogs) > 6 {
-				m.activityLogs = m.activityLogs[len(m.activityLogs)-6:]
+			if len(m.activityLogs) > 8 {
+				m.activityLogs = m.activityLogs[len(m.activityLogs)-8:]
 			}
 		}
 		m.mu.Unlock()
-		m.updateTableLayout()
 		return m, nil
 	case VulnMsg:
 		m.mu.Lock()
 		m.vulns = append(m.vulns, msg.Entry)
 		timestamp := time.Now().Format("15:04:05")
 		sevUpper := strings.ToUpper(msg.Entry.Severity)
-		logLine := fmt.Sprintf("  • [%s] ⚠ VULNERABILITY DETECTED in %s (%s - %s)", timestamp, msg.Entry.Package, sevUpper, msg.Entry.CVE)
+		logLine := fmt.Sprintf("  [%s] Advisory in %s (%s - %s)", timestamp, msg.Entry.Package, sevUpper, msg.Entry.CVE)
 		m.activityLogs = append(m.activityLogs, logLine)
-		if len(m.activityLogs) > 6 {
-			m.activityLogs = m.activityLogs[len(m.activityLogs)-6:]
+		if len(m.activityLogs) > 8 {
+			m.activityLogs = m.activityLogs[len(m.activityLogs)-8:]
 		}
 		m.mu.Unlock()
-		m.applyFilters()
 		return m, nil
 	case DoneMsg:
 		m.mu.Lock()
@@ -316,6 +329,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.evaluation = &eval
 		}
 		m.graph = msg.Graph
+		if m.graph == nil && msg.Result != nil {
+			m.graph = msg.Result.Graph
+		}
 		if len(msg.Secrets) > 0 {
 			m.secretFindings = msg.Secrets
 		}
@@ -326,15 +342,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.licenseFindings = msg.Licenses
 		}
 		m.state = StateExplorer
+		m.recalculateLayoutLocked()
+		m.applyFiltersLocked()
 		m.mu.Unlock()
-		m.applyFilters()
 		return m, nil
 	case ExportDoneMsg:
 		m.mu.Lock()
 		if msg.Err != nil {
 			m.exportStatus = fmt.Sprintf("Export failed: %v", msg.Err)
 		} else {
-			m.exportStatus = fmt.Sprintf("Exported findings to %s", msg.FileName)
+			m.exportStatus = fmt.Sprintf("Exported report to %s", msg.FileName)
 			m.state = StateExplorer
 		}
 		m.mu.Unlock()
@@ -365,7 +382,6 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	// Search Mode input handler
 	if m.isSearching {
 		switch key {
 		case "enter", "esc":
@@ -373,12 +389,13 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "backspace":
 			if len(m.searchQuery) > 0 {
-				m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+				runes := []rune(m.searchQuery)
+				m.searchQuery = string(runes[:len(runes)-1])
 				m.applyFilters()
 			}
 			return m, nil
 		default:
-			if len(key) == 1 {
+			if len([]rune(key)) == 1 {
 				m.searchQuery += key
 				m.applyFilters()
 			}
@@ -386,7 +403,6 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Export Modal input handler
 	if m.state == StateExportModal {
 		switch key {
 		case "esc", "q":
@@ -402,11 +418,12 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.executeExport("cyclonedx")
 		case "5":
 			return m, m.executeExport("spdx")
+		case "6":
+			return m, m.executeExport("sarif")
 		}
 		return m, nil
 	}
 
-	// Help Modal input handler
 	if m.state == StateHelp {
 		switch key {
 		case "esc", "q", "?":
@@ -417,12 +434,14 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch m.state {
 	case StateScanning:
-		if key == "q" {
-			// Cancel scan context to stop goroutine
+		switch key {
+		case "q", "c":
 			if m.cancelFunc != nil {
 				m.cancelFunc()
 			}
 			return m, tea.Quit
+		case "?":
+			m.state = StateHelp
 		}
 
 	case StateExplorer:
@@ -439,9 +458,28 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.switchToTab(TabLicenses)
 		case "5":
 			m.switchToTab(TabDependencyGraph)
+		case "o":
+			m.switchToTab(TabOverview)
+		case "i":
+			m.switchToTab(TabEvidence)
 		case "g":
-			m.groupMode = (m.groupMode + 1) % 3
+			m.groupMode = (m.groupMode + 1) % 4
 			m.applyFilters()
+		case "f":
+			m.cycleQuickFilter()
+			m.applyFilters()
+		case "s":
+			// If on Secrets tab (or a SECRET finding is selected), toggle reveal for ONLY the selected secret.
+			// Otherwise cycle sort order (Decision Priority -> Severity -> CVSS -> Package).
+			if m.activeTab == TabSecrets || (m.selectedIdx >= 0 && m.selectedIdx < len(m.filteredItems) && m.filteredItems[m.selectedIdx].Domain == "SECRET") {
+				m.toggleSelectedSecretReveal()
+			} else {
+				m.sortMode = (m.sortMode + 1) % 4
+				m.exportStatus = "Sort: " + sortModeLabel(m.sortMode)
+				m.applyFilters()
+			}
+		case "r":
+			m.toggleSelectedSecretReveal()
 		case "e":
 			m.state = StateExportModal
 		case "?":
@@ -462,7 +500,6 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filterSeverity = "low"
 			m.applyFilters()
 		case "y":
-			// Copy CVE/rule ID to clipboard (ignore non-actionable group headers)
 			if m.selectedIdx >= 0 && m.selectedIdx < len(m.filteredItems) {
 				item := m.filteredItems[m.selectedIdx]
 				if item.IsGroupHeader {
@@ -470,107 +507,131 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				if copyToClipboard(item.ID) == nil {
-					m.exportStatus = "✓ Copied " + item.ID + " to clipboard"
+					m.exportStatus = "Copied " + item.ID + " to clipboard"
 				} else {
-					m.exportStatus = "✗ Failed to copy to clipboard"
+					m.exportStatus = "Failed to copy to clipboard"
 				}
 			}
 		case "x":
-			// Hide/unhide selected finding locally by canonical Key (ID + PURL / location)
 			if m.selectedIdx >= 0 && m.selectedIdx < len(m.filteredItems) {
 				item := m.filteredItems[m.selectedIdx]
 				if item.IsGroupHeader {
 					m.exportStatus = "Cannot hide a group header"
 					return m, nil
 				}
-				key := item.Key
-				if key == "" {
-					key = item.ID + "|" + item.Package + "@" + item.Version
+				k := item.Key
+				if k == "" {
+					k = item.ID + "|" + item.Package + "@" + item.Version
 				}
-				if m.markedFixed[key] {
-					delete(m.markedFixed, key)
-					m.exportStatus = "✓ Unhidden locally: " + item.ID + " (" + item.Package + ")"
+				if m.markedFixed[k] {
+					delete(m.markedFixed, k)
+					m.exportStatus = "Unhidden locally: " + item.ID + " (" + item.Package + ")"
 				} else {
-					m.markedFixed[key] = true
-					m.exportStatus = "✓ Hidden locally (not remediated): " + item.ID + " (" + item.Package + ")"
+					m.markedFixed[k] = true
+					m.exportStatus = "Hidden locally (not remediated): " + item.ID + " (" + item.Package + ")"
 				}
 				m.applyFilters()
 			}
 		case "X":
-			// Restore all locally hidden findings
 			count := len(m.markedFixed)
 			m.markedFixed = make(map[string]bool)
 			m.showHidden = false
-			m.exportStatus = fmt.Sprintf("✓ Restored %d locally hidden finding(s)", count)
+			m.exportStatus = fmt.Sprintf("Restored %d locally hidden finding(s)", count)
 			m.applyFilters()
 		case "v":
-			// Toggle viewing locally hidden items so individual items can be inspected or unhidden
 			m.showHidden = !m.showHidden
 			if m.showHidden {
-				m.exportStatus = "Showing locally hidden findings (press [x] to unhide, [v] to hide again)"
+				m.exportStatus = "Showing locally hidden findings (press [x] to unhide)"
 			} else {
 				m.exportStatus = "Hiding locally hidden findings"
 			}
 			m.applyFilters()
-		case "s":
-			// Explicitly toggle secret value reveal/masking
-			m.revealSecrets = !m.revealSecrets
-			if m.revealSecrets {
-				m.exportStatus = "⚠ Secret values revealed (press [s] to mask)"
-			} else {
-				m.exportStatus = "✓ Secret values masked"
-			}
-			m.applyFilters()
 		case "enter":
-			// Toggle detail expansion
 			m.isDetailExpanded = !m.isDetailExpanded
-			m.recalculateViewports()
-		case "a", "esc":
+			m.mu.Lock()
+			m.recalculateLayoutLocked()
+			m.mu.Unlock()
+		case "a":
 			m.filterSeverity = ""
+			m.quickFilter = ""
 			m.searchQuery = ""
+			m.exportStatus = "Cleared all filters"
 			m.applyFilters()
+		case "esc":
+			if m.isDetailExpanded {
+				m.isDetailExpanded = false
+				m.mu.Lock()
+				m.recalculateLayoutLocked()
+				m.mu.Unlock()
+			} else {
+				m.exportStatus = ""
+			}
 		case "tab", "l":
-			// tab or l (vim right) = next pane
 			m.activePane = (m.activePane + 1) % 4
-			m.updateSelectedPaneContents()
 		case "h":
-			// h (vim left) = previous pane
-			m.activePane = (m.activePane + 3) % 4 // -1 mod 4 = 3
-			m.updateSelectedPaneContents()
+			m.activePane = (m.activePane + 3) % 4
 		case "w":
 			m.isMaximized = !m.isMaximized
-		case "up", "k":
-			if m.activePane == PaneTable {
-				var cmd tea.Cmd
-				m.vulnTable, cmd = m.vulnTable.Update(msg)
-				m.selectedIdx = m.vulnTable.Cursor()
-				m.updateSelectedPaneContents()
-				return m, cmd
-			} else if m.activePane == PaneReason {
-				m.reasonVP.LineUp(1)
-			} else if m.activePane == PaneChain {
-				m.chainVP.LineUp(1)
-			} else if m.activePane == PaneDetails {
-				m.detailVP.LineUp(1)
-			}
-		case "down", "j":
-			if m.activePane == PaneTable {
-				var cmd tea.Cmd
-				m.vulnTable, cmd = m.vulnTable.Update(msg)
-				m.selectedIdx = m.vulnTable.Cursor()
-				m.updateSelectedPaneContents()
-				return m, cmd
-			} else if m.activePane == PaneReason {
-				m.reasonVP.LineDown(1)
-			} else if m.activePane == PaneChain {
-				m.chainVP.LineDown(1)
-			} else if m.activePane == PaneDetails {
-				m.detailVP.LineDown(1)
-			}
+			m.mu.Lock()
+			m.recalculateLayoutLocked()
+			m.mu.Unlock()
+		case "up", "k", "down", "j":
+			// Always navigate the active findings table — never trap j/k focus in an invisible pane.
+			var cmd tea.Cmd
+			m.vulnTable, cmd = m.vulnTable.Update(msg)
+			m.selectedIdx = m.vulnTable.Cursor()
+			return m, cmd
 		}
 	}
 
 	return m, nil
+}
+
+func (m *Model) toggleSelectedSecretReveal() {
+	if m.selectedIdx < 0 || m.selectedIdx >= len(m.filteredItems) {
+		return
+	}
+	item := m.filteredItems[m.selectedIdx]
+	if item.Domain != "SECRET" {
+		m.exportStatus = "Select a secret finding to reveal or mask its value"
+		return
+	}
+	if m.revealedSecrets[item.Key] {
+		delete(m.revealedSecrets, item.Key)
+		m.exportStatus = "Masked secret in " + item.Package
+	} else {
+		m.revealedSecrets[item.Key] = true
+		m.exportStatus = "Revealed selected secret in " + item.Package + " (press [r] to mask)"
+	}
+	m.applyFilters()
+}
+
+func (m *Model) cycleQuickFilter() {
+	order := []string{"", "block", "review", "kev", "critical,high"}
+	for i, cur := range order {
+		if m.quickFilter == cur {
+			m.quickFilter = order[(i+1)%len(order)]
+			break
+		}
+	}
+	if m.quickFilter == "" {
+		m.exportStatus = "Filter: All findings"
+	} else {
+		m.exportStatus = "Filter: " + strings.ToUpper(m.quickFilter)
+	}
+}
+
+func sortModeLabel(mode SortMode) string {
+	switch mode {
+	case SortSeverity:
+		return "Severity"
+	case SortCVSS:
+		return "CVSS Score"
+	case SortPackage:
+		return "Component Name"
+	default:
+		return "Decision Priority (BLOCK > REVIEW > ALLOW)"
+	}
 }
 
 func (m *Model) applyFilters() {
@@ -582,7 +643,6 @@ func (m *Model) applyFilters() {
 func (m *Model) applyFiltersLocked() {
 	var items []TUIFinding
 
-	// Collect findings according to ActiveTab
 	switch m.activeTab {
 	case TabVulnerabilities:
 		if m.evaluation != nil && len(m.evaluation.Decisions) > 0 {
@@ -595,43 +655,58 @@ func (m *Model) applyFiltersLocked() {
 			for _, fd := range m.evaluation.Decisions {
 				f := fd.Finding
 				var signals []string
-				signals = append(signals, string(fd.Decision))
 				if f.KnownExploited {
 					signals = append(signals, "KEV")
 				}
 				if f.EPSSScore > 0 {
 					signals = append(signals, fmt.Sprintf("EPSS %.1f%%", f.EPSSScore*100))
 				}
+				if fd.IsNew {
+					signals = append(signals, "NEW")
+				}
 				if fd.AcceptedRisk {
-					signals = append(signals, "Accepted Risk")
+					signals = append(signals, "Accepted risk")
 				}
 
 				reasonParts := append([]string(nil), fd.Reasoning...)
 				if f.EffectiveScoreReason != "" {
-					reasonParts = append(reasonParts, "Score provenance: "+f.EffectiveScoreReason)
+					reasonParts = append(reasonParts, "Provenance: "+f.EffectiveScoreReason)
 				}
-				reason := fmt.Sprintf("[%s] %s", strings.Join(signals, " · "), strings.Join(reasonParts, " "))
+				reason := strings.Join(reasonParts, " ")
+				if len(signals) > 0 {
+					reason = fmt.Sprintf("[%s] %s", strings.Join(signals, " · "), reason)
+				}
 
 				depPath := pathByPkg[f.Package+"@"+f.Version]
-				if len(depPath) == 0 {
-					depPath = pathByPkg[f.Package]
+				if len(depPath) == 0 && m.graph != nil {
+					depPath = m.graph.GetVulnerablePath(f.Package + "@" + f.Version)
 				}
 
-				domainLabel := "SCA:" + string(fd.Decision)
+				decLabel := string(fd.Decision)
+				if fd.AcceptedRisk {
+					decLabel = "ACCEPTED"
+				}
+
 				items = append(items, TUIFinding{
 					Key:             f.Key,
-					Domain:          domainLabel,
-					Decision:        string(fd.Decision),
+					Domain:          "SCA",
+					Decision:        decLabel,
+					AcceptedRisk:    fd.AcceptedRisk,
+					KnownExploited:  f.KnownExploited,
+					EPSSScore:       f.EPSSScore,
+					MatchedRule:     fd.MatchedRule,
+					PURL:            f.PURL,
 					Package:         f.Package,
 					Version:         f.Version,
 					ID:              f.ID,
+					Aliases:         f.Aliases,
 					Severity:        string(f.Severity),
 					CVSS:            f.CVSSScore,
 					Title:           f.Summary,
 					Description:     f.Summary,
 					ReasonFlagged:   reason,
 					DependencyPath:  depPath,
-					Remediation:     "Review policy decision and upgrade affected component version",
+					Remediation:     "Review affected versions and upgrade path; verify rule " + fd.MatchedRule,
 					MissingEvidence: f.MissingEvidence,
 				})
 			}
@@ -649,13 +724,14 @@ func (m *Model) applyFiltersLocked() {
 					chainPrefix = fmt.Sprintf("[Chain: %s] ", strings.Join(v.DependencyPath, " -> "))
 				}
 
-				reason := fmt.Sprintf("%sA vulnerability affects %s (%s). The issue is tracked upstream as %s with CVSS score %.1f.", chainPrefix, v.Package, v.Version, cveID, v.CVSS)
+				reason := fmt.Sprintf("%sA vulnerability affects %s (%s). Tracked upstream as %s (CVSS %.1f).", chainPrefix, v.Package, v.Version, cveID, v.CVSS)
 				if v.CVEDescription != "" {
 					reason = chainPrefix + v.CVEDescription
 				}
 				items = append(items, TUIFinding{
 					Key:            fmt.Sprintf("%s|%s@%s", cveID, v.Package, v.Version),
 					Domain:         "SCA",
+					Decision:       "REVIEW",
 					Package:        pkgDisplay,
 					Version:        v.Version,
 					ID:             cveID,
@@ -673,20 +749,22 @@ func (m *Model) applyFiltersLocked() {
 	case TabSecrets:
 		for _, s := range m.secretFindings {
 			relPath := filepath.Base(s.FilePath)
-			matchDisplay := secrets.MaskSecret(s.Match) + " (masked — press [s] to reveal)"
-			if m.revealSecrets {
-				matchDisplay = s.Match + " (REVEALED — press [s] to mask)"
+			key := fmt.Sprintf("SECRET|%s:%d|%s", s.FilePath, s.LineNumber, s.Type)
+			matchDisplay := secrets.MaskSecret(s.Match) + " (masked — press [r] to reveal selected secret)"
+			if m.revealedSecrets[key] {
+				matchDisplay = s.Match + " (REVEALED — press [r] to mask)"
 			}
 			items = append(items, TUIFinding{
-				Key:           fmt.Sprintf("SECRET|%s:%d|%s", s.FilePath, s.LineNumber, s.Type),
+				Key:           key,
 				Domain:        "SECRET",
+				Decision:      "BLOCK",
 				Package:       relPath,
 				ID:            string(s.Type),
-				Severity:      "secret",
-				Title:         fmt.Sprintf("Leaked %s at line %d", s.Type, s.LineNumber),
-				Description:   fmt.Sprintf("Hardcoded secret discovered in %s:%d\nMatch: %s", s.FilePath, s.LineNumber, matchDisplay),
-				ReasonFlagged: fmt.Sprintf("High-entropy secret key pattern matching %s discovered in source code (Shannon Entropy: %.2f)", s.Type, s.Entropy),
-				Remediation:   "Revoke secret key immediately and remove from git commit history",
+				Severity:      "critical",
+				Title:         fmt.Sprintf("Detected %s at line %d", s.Type, s.LineNumber),
+				Description:   fmt.Sprintf("Credential pattern in %s:%d\nMatch: %s", s.FilePath, s.LineNumber, matchDisplay),
+				ReasonFlagged: fmt.Sprintf("Secret pattern matching %s at line %d (Shannon entropy: %.2f)", s.Type, s.LineNumber, s.Entropy),
+				Remediation:   "Rotate credential immediately and remove from version control history",
 				RawSecret:     s,
 			})
 		}
@@ -694,16 +772,21 @@ func (m *Model) applyFiltersLocked() {
 	case TabIaC:
 		for _, iac := range m.iacIssues {
 			relPath := filepath.Base(iac.Source)
+			dec := "REVIEW"
+			if strings.EqualFold(string(iac.Severity), "critical") || strings.EqualFold(string(iac.Severity), "high") {
+				dec = "BLOCK"
+			}
 			items = append(items, TUIFinding{
 				Key:           fmt.Sprintf("IAC|%s:%d|%s", iac.Source, iac.LineNumber, iac.RuleID),
 				Domain:        "IaC",
+				Decision:      dec,
 				Package:       relPath,
 				ID:            iac.RuleID,
 				Severity:      string(iac.Severity),
 				Title:         iac.Title,
 				Description:   iac.Message,
-				ReasonFlagged: fmt.Sprintf("IaC Linter Rule %s triggered: %s", iac.RuleID, iac.Message),
-				Remediation:   "Update Dockerfile / GitHub Action workflow according to security best practices",
+				ReasonFlagged: fmt.Sprintf("Rule %s: %s", iac.RuleID, iac.Message),
+				Remediation:   "Update container or workflow configuration according to rule guidance",
 				RawIaC:        iac,
 			})
 		}
@@ -711,28 +794,36 @@ func (m *Model) applyFiltersLocked() {
 	case TabLicenses:
 		for _, lic := range m.licenseFindings {
 			sev := "low"
-			reason := "Permissive license (MIT/Apache/BSD) safe for commercial software distribution"
-			if lic.Category == license.Copyleft {
-				sev = "high"
-				reason = "Copyleft license (GPL/AGPL) poses legal infection risk requiring source code disclosure"
+			dec := "ALLOW"
+			reason := "Permissive licence (e.g. MIT/Apache/BSD): review attribution and notice obligations"
+			switch lic.Category {
+			case license.Copyleft:
+				sev = "medium"
+				dec = "REVIEW"
+				reason = "Reciprocal / copyleft licence (e.g. GPL/AGPL/MPL): review distribution and source disclosure obligations"
+			case license.Unknown:
+				sev = "unknown"
+				dec = "REVIEW"
+				reason = "Licence metadata not declared in lockfile (inspect package manifest or upstream registry)"
 			}
 			items = append(items, TUIFinding{
 				Key:           fmt.Sprintf("LICENSE|%s@%s|%s", lic.PackageName, lic.Version, lic.License),
 				Domain:        "LICENSE",
+				Decision:      dec,
 				Package:       lic.PackageName,
 				Version:       lic.Version,
 				ID:            lic.License,
 				Severity:      sev,
 				Title:         fmt.Sprintf("%s (%s)", lic.License, lic.Category),
-				Description:   fmt.Sprintf("Package %s uses %s license", lic.PackageName, lic.License),
+				Description:   fmt.Sprintf("Component %s@%s declares licence %q (classification: %s)", lic.PackageName, lic.Version, lic.License, lic.Category),
 				ReasonFlagged: reason,
-				Remediation:   "Review open source license terms and compliance requirements",
+				Remediation:   "Verify licence compatibility with your distribution model",
 				RawLicense:    lic,
 			})
 		}
 
 	case TabDependencyGraph:
-		if m.graph != nil {
+		if m.graph != nil && len(m.graph.Nodes) > 0 {
 			keys := make([]string, 0, len(m.graph.Nodes))
 			for k := range m.graph.Nodes {
 				keys = append(keys, k)
@@ -740,172 +831,306 @@ func (m *Model) applyFiltersLocked() {
 			sort.Strings(keys)
 			for _, k := range keys {
 				node := m.graph.Nodes[k]
+				dec := string(node.ScanStatus)
+				if dec == "" {
+					dec = "scanned"
+				}
+				sev := "low"
+				if len(node.Vulnerabilities) > 0 {
+					sev = "high"
+				} else if node.ScanStatus == types.StatusUnsupported || node.Ambiguous {
+					sev = "unknown"
+				}
+				scopeLabel := "transitive"
+				if node.Direct {
+					scopeLabel = "direct"
+				}
+				if node.Ambiguous {
+					scopeLabel = "ambiguous-edge"
+				}
 				items = append(items, TUIFinding{
-					Key:           "GRAPH|" + k,
+					Key:            "GRAPH|" + k,
+					Domain:         "GRAPH",
+					Decision:       strings.ToUpper(dec),
+					Package:        node.Name,
+					Version:        node.Version,
+					ID:             fmt.Sprintf("depth=%d (%s)", node.Depth, scopeLabel),
+					Severity:       sev,
+					Title:          fmt.Sprintf("%s@%s", node.Name, node.Version),
+					Description:    fmt.Sprintf("Ecosystem: %s | Scope: %s (%s) | Depth: %d | Status: %s", node.Ecosystem, node.Type, scopeLabel, node.Depth, node.ScanStatus),
+					ReasonFlagged:  fmt.Sprintf("%d advisory match(es) · %d child dep(s)", len(node.Vulnerabilities), len(node.Children)),
+					DependencyPath: m.graph.GetVulnerablePath(k),
+				})
+			}
+		} else if m.result != nil {
+			for _, dep := range m.result.Dependencies {
+				scopeLabel := "transitive"
+				if dep.Direct {
+					scopeLabel = "direct"
+				}
+				if dep.Ambiguous {
+					scopeLabel = "ambiguous-edge"
+				}
+				items = append(items, TUIFinding{
+					Key:           "GRAPH|" + dep.Name + "@" + dep.Version,
 					Domain:        "GRAPH",
-					Package:       node.Name,
-					Version:       node.Version,
-					ID:            fmt.Sprintf("Depth %d", node.Depth),
+					Decision:      strings.ToUpper(string(dep.ScanStatus)),
+					Package:       dep.Name,
+					Version:       dep.Version,
+					ID:            scopeLabel,
 					Severity:      "low",
-					Title:         fmt.Sprintf("Node: %s@%s", node.Name, node.Version),
-					Description:   fmt.Sprintf("Ecosystem: %s | Direct: %v | Depth: %d", node.Ecosystem, node.Direct, node.Depth),
-					ReasonFlagged: fmt.Sprintf("Dependency graph node with %d vulnerabilities", len(node.Vulnerabilities)),
+					Title:         fmt.Sprintf("%s@%s", dep.Name, dep.Version),
+					Description:   fmt.Sprintf("Ecosystem: %s | Type: %s | Scope: %s | Status: %s", dep.Ecosystem, dep.Type, scopeLabel, dep.ScanStatus),
+					ReasonFlagged: fmt.Sprintf("%d advisory match(es) · %d child dep(s)", len(dep.Vulnerabilities), len(dep.DependsOn)),
 				})
 			}
 		}
 	}
 
-	// Severity & Text Search filtering
 	var filtered []TUIFinding
 	search := strings.ToLower(strings.TrimSpace(m.searchQuery))
 
-	// Parse filterSeverity as comma-separated list (e.g., "critical,high")
 	allowedSeverities := make(map[string]bool)
-	if m.filterSeverity != "" {
-		for _, sev := range strings.Split(m.filterSeverity, ",") {
+	sevFilter := m.filterSeverity
+	if m.quickFilter == "critical,high" && sevFilter == "" {
+		sevFilter = "critical,high"
+	}
+	if sevFilter != "" {
+		for _, sev := range strings.Split(sevFilter, ",") {
 			allowedSeverities[strings.TrimSpace(strings.ToLower(sev))] = true
 		}
 	}
 
 	for _, item := range items {
-		key := item.Key
-		if key == "" {
-			key = item.ID + "|" + item.Package + "@" + item.Version
+		k := item.Key
+		if k == "" {
+			k = item.ID + "|" + item.Package + "@" + item.Version
 		}
-		// Skip locally hidden findings unless showHidden is toggled on
-		if m.markedFixed[key] && !m.showHidden {
+		if m.markedFixed[k] && !m.showHidden {
 			continue
 		}
-		if m.activeTab == TabVulnerabilities && m.filterSeverity != "" && !allowedSeverities[strings.ToLower(item.Severity)] {
+		if m.activeTab == TabVulnerabilities && len(allowedSeverities) > 0 && !allowedSeverities[strings.ToLower(item.Severity)] {
 			continue
+		}
+		switch m.quickFilter {
+		case "block":
+			if !strings.EqualFold(item.Decision, "BLOCK") {
+				continue
+			}
+		case "review":
+			if !strings.EqualFold(item.Decision, "REVIEW") {
+				continue
+			}
+		case "kev":
+			if !item.KnownExploited {
+				continue
+			}
 		}
 		if search != "" {
-			matchPkg := strings.Contains(strings.ToLower(item.Package), search)
-			matchID := strings.Contains(strings.ToLower(item.ID), search)
-			matchTitle := strings.Contains(strings.ToLower(item.Title), search) || strings.Contains(strings.ToLower(item.Description), search)
-			if !matchPkg && !matchID && !matchTitle {
+			haystack := strings.ToLower(item.Package + " " + item.Version + " " + item.PURL + " " + item.ID + " " + item.Decision + " " + item.Title + " " + item.Description + " " + item.ReasonFlagged)
+			if !strings.Contains(haystack, search) {
 				continue
 			}
 		}
 		filtered = append(filtered, item)
 	}
 
-	// Grouping Mode
-	if m.groupMode == GroupPackage {
+	sortFindings(filtered, m.sortMode)
+
+	switch m.groupMode {
+	case GroupPackage:
 		filtered = groupFindingsByPackage(filtered)
-	} else if m.groupMode == GroupSeverity {
+	case GroupSeverity:
 		filtered = groupFindingsBySeverity(filtered)
+	case GroupDecision:
+		filtered = groupFindingsByDecision(filtered)
 	}
 
 	m.filteredItems = filtered
 	if m.selectedIdx >= len(m.filteredItems) {
 		m.selectedIdx = 0
+		m.vulnTable.SetCursor(0)
 	}
-	m.updateTableLayout()
-	m.updateSelectedPaneContents()
+	m.updateTableRowsLocked()
 }
 
-func (m *Model) recalculateViewports() {
-	bodyHeight := m.height - 4
+func sortFindings(items []TUIFinding, mode SortMode) {
+	decRank := func(d string) int {
+		switch strings.ToUpper(d) {
+		case "BLOCK":
+			return 4
+		case "REVIEW":
+			return 3
+		case "ACCEPTED":
+			return 2
+		default:
+			return 1
+		}
+	}
+	sevRank := func(s string) int {
+		switch strings.ToLower(s) {
+		case "critical", "secret":
+			return 5
+		case "high":
+			return 4
+		case "medium":
+			return 3
+		case "low":
+			return 2
+		default:
+			return 1
+		}
+	}
+
+	sort.SliceStable(items, func(i, j int) bool {
+		a, b := items[i], items[j]
+		switch mode {
+		case SortSeverity:
+			if sevRank(a.Severity) != sevRank(b.Severity) {
+				return sevRank(a.Severity) > sevRank(b.Severity)
+			}
+		case SortCVSS:
+			if a.CVSS != b.CVSS {
+				return a.CVSS > b.CVSS
+			}
+		case SortPackage:
+			if a.Package != b.Package {
+				return a.Package < b.Package
+			}
+		default:
+			if decRank(a.Decision) != decRank(b.Decision) {
+				return decRank(a.Decision) > decRank(b.Decision)
+			}
+			if a.KnownExploited != b.KnownExploited {
+				return a.KnownExploited
+			}
+			if sevRank(a.Severity) != sevRank(b.Severity) {
+				return sevRank(a.Severity) > sevRank(b.Severity)
+			}
+			if a.CVSS != b.CVSS {
+				return a.CVSS > b.CVSS
+			}
+		}
+		if a.Package != b.Package {
+			return a.Package < b.Package
+		}
+		return a.ID < b.ID
+	})
+}
+
+func (m *Model) recalculateLayoutLocked() {
+	bodyHeight := m.height - 5
 	if bodyHeight < 8 {
 		bodyHeight = 8
 	}
-
-	topHeight := bodyHeight / 2
-	bottomHeight := bodyHeight - topHeight
+	tableHeight := bodyHeight - 3
+	if m.isDetailExpanded {
+		tableHeight = (bodyHeight / 2) - 3
+	}
+	if tableHeight < 4 {
+		tableHeight = 4
+	}
 
 	availWidth := m.width - 2
-	if availWidth < 30 {
-		availWidth = 30
+	if availWidth < 40 {
+		availWidth = 40
 	}
 
-	wReason := int(float64(availWidth) * 0.25)
-	wDetail := int(float64(availWidth) * 0.50)
-	wChain := availWidth - wReason - wDetail
-
-	if m.isMaximized {
-		topHeight = bodyHeight
-		bottomHeight = bodyHeight
-		wReason = m.width - 2
-		wDetail = m.width - 2
-		wChain = m.width - 2
-	}
-
-	// Calculate rich 5-column table widths
-	domainColWidth, sevColWidth, targetColWidth, idColWidth, reasonColWidth := calculateColumnWidths(availWidth)
-	m.tableTargetColWidth = targetColWidth
-	m.tableIDColWidth = idColWidth
-	m.tableReasonColWidth = reasonColWidth
+	decW, domW, sevW, targetW, idW, reasonW := calculateColumnWidths(availWidth)
+	m.tableDecisionWidth = decW
+	m.tableDomainWidth = domW
+	m.tableSeverityWidth = sevW
+	m.tableTargetColWidth = targetW
+	m.tableIDColWidth = idW
+	m.tableReasonColWidth = reasonW
 
 	m.vulnTable.SetColumns([]table.Column{
-		{Title: "DOMAIN", Width: domainColWidth},
-		{Title: "SEVERITY", Width: sevColWidth},
-		{Title: "TARGET / PACKAGE", Width: targetColWidth},
-		{Title: "ID / RULE", Width: idColWidth},
-		{Title: "REASON SUMMARY", Width: reasonColWidth},
+		{Title: "DECISION", Width: decW},
+		{Title: "DOMAIN", Width: domW},
+		{Title: "SEVERITY", Width: sevW},
+		{Title: "COMPONENT", Width: targetW},
+		{Title: "ID / RULE", Width: idW},
+		{Title: "SIGNAL & REASON", Width: reasonW},
 	})
-
 	m.vulnTable.SetWidth(availWidth - 4)
-	m.vulnTable.SetHeight(topHeight - 3)
-
-	m.reasonVP.Width = wReason - 4
-	m.reasonVP.Height = bottomHeight - 3
-
-	m.detailVP.Width = wDetail - 4
-	m.detailVP.Height = bottomHeight - 3
-
-	m.chainVP.Width = wChain - 4
-	m.chainVP.Height = bottomHeight - 3
-
-	m.updateTableLayout()
-	m.updateSelectedPaneContents()
+	m.vulnTable.SetHeight(tableHeight)
+	m.updateTableRowsLocked()
 }
 
-// calculateColumnWidths computes 5-column table widths from available width.
-func calculateColumnWidths(availWidth int) (domain, severity, target, id, reason int) {
-	// Subtract 18 for outer box border & 5-column cell padding
-	tableInnerWidth := availWidth - 18
-	if tableInnerWidth < 30 {
-		tableInnerWidth = 30
+func calculateColumnWidths(availWidth int) (decision, domain, severity, target, id, reason int) {
+	inner := availWidth - 20
+	if inner < 42 {
+		inner = 42
 	}
-	domain = 10
-	severity = 12
-	remWidth := tableInnerWidth - domain - severity
-	target = int(float64(remWidth) * 0.25)
-	id = int(float64(remWidth) * 0.25)
-	reason = remWidth - target - id
-	if reason < 10 {
-		reason = 10
+	if availWidth <= 85 {
+		decision = 8
+		domain = 6
+		severity = 8
+		rem := inner - decision - domain - severity
+		target = rem / 3
+		id = rem / 3
+		reason = rem - target - id
+		if reason < 8 {
+			reason = 8
+		}
+		return
+	}
+	decision = 10
+	domain = 8
+	severity = 10
+	rem := inner - decision - domain - severity
+	target = int(float64(rem) * 0.25)
+	id = int(float64(rem) * 0.22)
+	reason = rem - target - id
+	if reason < 12 {
+		reason = 12
 	}
 	return
 }
 
-func (m *Model) updateTableLayout() {
-	targetWidth := m.tableTargetColWidth
-	if targetWidth <= 0 {
-		targetWidth = 20
+func (m *Model) updateTableRowsLocked() {
+	decW := m.tableDecisionWidth
+	if decW <= 0 {
+		decW = 10
 	}
-	idWidth := m.tableIDColWidth
-	if idWidth <= 0 {
-		idWidth = 20
+	domW := m.tableDomainWidth
+	if domW <= 0 {
+		domW = 8
 	}
-	reasonWidth := m.tableReasonColWidth
-	if reasonWidth <= 0 {
-		reasonWidth = 30
+	sevW := m.tableSeverityWidth
+	if sevW <= 0 {
+		sevW = 10
+	}
+	targetW := m.tableTargetColWidth
+	if targetW <= 0 {
+		targetW = 20
+	}
+	idW := m.tableIDColWidth
+	if idW <= 0 {
+		idW = 18
+	}
+	reasonW := m.tableReasonColWidth
+	if reasonW <= 0 {
+		reasonW = 30
 	}
 
-	var rows []table.Row
+	rows := make([]table.Row, 0, len(m.filteredItems))
 	for _, item := range m.filteredItems {
-		pkgStr := truncateRunes(item.Package, targetWidth)
-		idStr := truncateRunes(item.ID, idWidth)
-		reasonSummary := truncateRunes(item.ReasonFlagged, reasonWidth)
-
+		comp := item.Package
+		if item.Version != "" && !strings.Contains(comp, "@") {
+			comp = comp + "@" + item.Version
+		}
+		dec := item.Decision
+		if dec == "" {
+			dec = "REVIEW"
+		}
 		rows = append(rows, table.Row{
-			item.Domain,
-			strings.ToUpper(item.Severity),
-			pkgStr,
-			idStr,
-			reasonSummary,
+			truncateRunes(dec, decW),
+			truncateRunes(item.Domain, domW),
+			truncateRunes(strings.ToUpper(item.Severity), sevW),
+			truncateRunes(comp, targetW),
+			truncateRunes(item.ID, idW),
+			truncateRunes(item.ReasonFlagged, reasonW),
 		})
 	}
 	m.vulnTable.SetRows(rows)
@@ -925,74 +1150,10 @@ func truncateRunes(s string, maxWidth int) string {
 	return string(runes[:maxWidth-3]) + "..."
 }
 
-func (m *Model) updateSelectedPaneContents() {
-	if len(m.filteredItems) == 0 {
-		m.reasonVP.SetContent("No findings in this category.")
-		m.chainVP.SetContent("No dependency chain available.")
-		m.detailVP.SetContent("No detailed inspection content.")
-		return
-	}
-
-	if m.selectedIdx < 0 || m.selectedIdx >= len(m.filteredItems) {
-		m.selectedIdx = 0
-		m.vulnTable.SetCursor(0)
-	}
-
-	item := m.filteredItems[m.selectedIdx]
-
-	// 1. Reason Viewport Content (Word Wrapped)
-	reasonWrapped := lipgloss.NewStyle().
-		Width(m.reasonVP.Width).
-		Render(item.ReasonFlagged)
-	m.reasonVP.SetContent(reasonWrapped)
-
-	// 2. Dependency Chain Viewport Content
-	var chainBuf strings.Builder
-	if len(item.DependencyPath) > 0 {
-		for i, nodeName := range item.DependencyPath {
-			indent := strings.Repeat("  ", i)
-			if i == 0 {
-				chainBuf.WriteString(fmt.Sprintf("%s󰏖 Root: %s\n", indent, nodeName))
-			} else if i == len(item.DependencyPath)-1 {
-				chainBuf.WriteString(fmt.Sprintf("%s└── %s [VULNERABLE TARGET]\n", indent, nodeName))
-			} else {
-				chainBuf.WriteString(fmt.Sprintf("%s└── %s\n", indent, nodeName))
-			}
-		}
-	} else {
-		chainBuf.WriteString(fmt.Sprintf("Target: %s@%s\nNo deep dependency path recorded.", item.Package, item.Version))
-	}
-	m.chainVP.SetContent(chainBuf.String())
-
-	// 3. Detail Inspection Viewport Content
-	var detailBuf strings.Builder
-	detailBuf.WriteString(fmt.Sprintf("Target Package: %s\n", item.Package))
-	if item.Version != "" {
-		detailBuf.WriteString(fmt.Sprintf("Version: %s\n", item.Version))
-	}
-	detailBuf.WriteString(fmt.Sprintf("ID / Rule: %s\n", item.ID))
-	detailBuf.WriteString(fmt.Sprintf("Severity: %s\n\n", RenderSeverityBadge(item.Severity, m.styles)))
-
-	detailBuf.WriteString("󰈔 Context & Description:\n")
-	descWrapped := lipgloss.NewStyle().
-		Width(m.detailVP.Width).
-		Render(item.Description)
-	detailBuf.WriteString(descWrapped + "\n\n")
-
-	if item.Remediation != "" {
-		detailBuf.WriteString("🛠️ Recommended Action:\n")
-		remWrapped := lipgloss.NewStyle().
-			Width(m.detailVP.Width).
-			Render(item.Remediation)
-		detailBuf.WriteString(remWrapped + "\n")
-	}
-
-	m.detailVP.SetContent(detailBuf.String())
-}
-
 func (m *Model) executeExport(fmtName string) tea.Cmd {
 	m.mu.Lock()
 	res := m.result
+	evalPtr := m.evaluation
 	if res == nil {
 		m.exportStatus = "Error: No scan result available to export"
 		m.mu.Unlock()
@@ -1003,10 +1164,13 @@ func (m *Model) executeExport(fmtName string) tea.Cmd {
 
 	return func() tea.Msg {
 		ext := fmtName
-		if fmtName == "cyclonedx" {
+		switch fmtName {
+		case "cyclonedx":
 			ext = "cyclonedx.json"
-		} else if fmtName == "spdx" {
+		case "spdx":
 			ext = "spdx.json"
+		case "sarif":
+			ext = "sarif.json"
 		}
 
 		fileName := fmt.Sprintf("vigil-export-%d.%s", time.Now().Unix(), ext)
@@ -1028,12 +1192,20 @@ func (m *Model) executeExport(fmtName string) tea.Cmd {
 			exportErr = export.CycloneDX(res, file)
 		case "spdx":
 			exportErr = export.SPDX(res, file)
+		case "sarif":
+			var eval policy.EvaluationResult
+			if evalPtr != nil {
+				eval = *evalPtr
+			} else {
+				eval = policy.Evaluate(res, policy.DefaultPolicy(), nil, time.Now().UTC())
+			}
+			exportErr = policy.WriteSARIF(file, res.LockFile, eval)
 		}
 		return ExportDoneMsg{FileName: fileName, Err: exportErr}
 	}
 }
 
-// View renders the Lazygit/btm style Fullscreen DevSecOps Multi-Pane TUI
+// View renders the current TUI screen as a pure function of model state.
 func (m *Model) View() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1046,7 +1218,7 @@ func (m *Model) View() string {
 	case StateScanning:
 		return m.renderScanning()
 	case StateExplorer:
-		return m.renderLazygitExplorer()
+		return m.renderExplorer()
 	case StateExportModal:
 		return m.renderExportModal()
 	case StateHelp:
@@ -1056,284 +1228,205 @@ func (m *Model) View() string {
 	}
 }
 
-func (m *Model) renderScanning() string {
+func (m *Model) renderExplorer() string {
 	var sections []string
-	header := m.styles.Header.Render(fmt.Sprintf("🛡️ VIGIL DEVSECOPS SCANNER %s", m.spinner.View()))
-	sections = append(sections, header)
-
-	bodyHeight := m.height - 4
-	if bodyHeight < 10 {
-		bodyHeight = 10
-	}
 
 	availWidth := m.width - 2
-	if availWidth < 20 {
-		availWidth = 20
+	if availWidth < 40 {
+		availWidth = 40
 	}
-
-	// Calculate dynamic table column widths for scanning view
-	domainColWidth, sevColWidth, targetColWidth, idColWidth, reasonColWidth := calculateColumnWidths(availWidth)
-	m.tableTargetColWidth = targetColWidth
-	m.tableIDColWidth = idColWidth
-	m.tableReasonColWidth = reasonColWidth
-
-	m.vulnTable.SetColumns([]table.Column{
-		{Title: "DOMAIN", Width: domainColWidth},
-		{Title: "SEVERITY", Width: sevColWidth},
-		{Title: "TARGET / PACKAGE", Width: targetColWidth},
-		{Title: "ID / RULE", Width: idColWidth},
-		{Title: "REASON SUMMARY", Width: reasonColWidth},
-	})
-	m.vulnTable.SetWidth(availWidth - 4)
-	m.vulnTable.SetHeight(bodyHeight - 8)
-
-	var scanBody []string
-	scanBody = append(scanBody, m.styles.Title.Render("⚡ Active Phase: [1/4] Dependency Vulnerability Analysis (10 Parallel Workers)"))
-
-	if m.progress.Total > 0 {
-		percent := float64(m.progress.Current) / float64(m.progress.Total)
-		if percent > 1.0 {
-			percent = 1.0
-		}
-		barWidth := 34
-		filled := int(percent * float64(barWidth))
-		bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
-		scanBody = append(scanBody, fmt.Sprintf("Progress: [%s] %d%% (%d/%d packages)", bar, int(percent*100), m.progress.Current, m.progress.Total))
-	}
-
-	if m.progress.CurrentPkg != "" {
-		scanBody = append(scanBody, fmt.Sprintf("Current Target: %s", m.styles.Subtitle.Render(m.progress.CurrentPkg)))
-	}
-
-	elapsed := time.Since(m.startTime).Seconds()
-	scanBody = append(scanBody, fmt.Sprintf("󰥔 Elapsed: %.0fs | Found Vulnerabilities: %d", elapsed, len(m.vulns)))
-
-	if len(m.activityLogs) > 0 {
-		scanBody = append(scanBody, "", m.styles.Title.Render("󱇤 Real-Time Activity Log:"))
-		scanBody = append(scanBody, m.activityLogs...)
-	}
-
-	if len(m.vulns) > 0 {
-		scanBody = append(scanBody, "", m.styles.Title.Render("󰍜 Live Vulnerabilities Stream:"), m.vulnTable.View())
-	}
-
-	boxContent := strings.Join(scanBody, "\n")
-	scanPaneBox := RenderPaneBorder("󰥔 Full-Spectrum Security Scan in Progress", boxContent, availWidth, bodyHeight, true)
-	sections = append(sections, scanPaneBox)
-
-	footer := m.styles.StatusBar.Render("Press [q] to cancel scanning")
-	sections = append(sections, footer)
-
-	return strings.Join(sections, "\n")
-}
-
-func (m *Model) renderLazygitExplorer() string {
-	var sections []string
-
-	// 1. Top Header Banner with Policy Decision, Evidence State, Coverage, and Threat Intel status
-	vulnCount := len(m.vulns)
-	covText := "Coverage: n/a"
-	decisionText := "DECISION: PENDING"
-	evidenceText := "EVIDENCE: UNVERIFIED"
-	tiText := ""
-	if m.result != nil {
-		vulnCount = m.result.TotalVulns
-		if m.result.Coverage.TotalPackages > 0 {
-			covText = fmt.Sprintf("Coverage: %d/%d", m.result.Coverage.ScannedPackages, m.result.Coverage.TotalPackages)
-		}
-		if m.result.ThreatIntel.KEV.Status != "" {
-			tiText = fmt.Sprintf(" | KEV: %s | EPSS: %s", m.result.ThreatIntel.KEV.Status, m.result.ThreatIntel.EPSS.Status)
-		}
-	}
-	if m.evaluation != nil {
-		decisionText = fmt.Sprintf("DECISION: %s", m.evaluation.OverallDecision)
-		evidenceText = fmt.Sprintf("EVIDENCE: %s", m.evaluation.EvidenceState)
-	}
-
-	headerText := fmt.Sprintf("🛡️ VIGIL SECURITY ASSESSMENT | %s | %s | %s%s | %d VULNS | %d SECRETS | %d IAC",
-		decisionText, evidenceText, covText, tiText, vulnCount, len(m.secretFindings), len(m.iacIssues))
-	sections = append(sections, m.styles.Header.Render(headerText))
-
-	// 2. Navigation Tabs Bar
-	tabs := []string{"[1] Vulns (SCA)", "[2] Secrets", "[3] IaC Security", "[4] Licenses", "[5] Dep Graph"}
-	var renderedTabs []string
-	for i, tab := range tabs {
-		if ActiveTab(i) == m.activeTab {
-			renderedTabs = append(renderedTabs, m.styles.ActiveTab.Render(tab))
-		} else {
-			renderedTabs = append(renderedTabs, m.styles.InactiveTab.Render(tab))
-		}
-	}
-	tabsRow := lipgloss.JoinHorizontal(lipgloss.Top, renderedTabs...)
-	sections = append(sections, tabsRow)
-
-	// 3. Filter & Search Bar with Visual Badges
-	var filterBadges []string
-
-	// Severity badges (show which are active)
-	severities := []struct {
-		name  string
-		key   string
-		color lipgloss.Color
-	}{
-		{"CRIT", "critical", lipgloss.Color("#FF5555")},
-		{"HIGH", "high", lipgloss.Color("#FFB86C")},
-		{"MED", "medium", lipgloss.Color("#F1FA8C")},
-		{"LOW", "low", lipgloss.Color("#8BE9FD")},
-	}
-
-	activeSevs := make(map[string]bool)
-	if m.filterSeverity != "" {
-		for _, sev := range strings.Split(m.filterSeverity, ",") {
-			activeSevs[strings.TrimSpace(strings.ToLower(sev))] = true
-		}
-	}
-
-	for _, sev := range severities {
-		if len(activeSevs) == 0 || activeSevs[sev.key] {
-			badge := lipgloss.NewStyle().Foreground(sev.color).Bold(true).Render("●" + sev.name)
-			filterBadges = append(filterBadges, badge)
-		} else {
-			badge := lipgloss.NewStyle().Foreground(lipgloss.Color("#44475A")).Render("○" + sev.name)
-			filterBadges = append(filterBadges, badge)
-		}
-	}
-
-	searchStr := ""
-	if m.searchQuery != "" {
-		searchStr = fmt.Sprintf(" | Search: %q", m.searchQuery)
-	}
-	if m.isSearching {
-		searchStr = fmt.Sprintf(" | Search: %q █", m.searchQuery)
-	}
-
-	markedCount := len(m.markedFixed)
-	markedStr := ""
-	if markedCount > 0 {
-		markedStr = fmt.Sprintf(" | Hidden: %d", markedCount)
-	}
-
-	filterBar := fmt.Sprintf("%s%s%s | Findings: %d",
-		strings.Join(filterBadges, " "),
-		searchStr,
-		markedStr,
-		len(m.filteredItems),
-	)
-	sections = append(sections, m.styles.FilterBar.Render(filterBar))
-
-	// 4. Single-Pane Layout (optional detail expansion)
-	bodyHeight := m.height - 4
+	bodyHeight := m.height - 5
 	if bodyHeight < 8 {
 		bodyHeight = 8
 	}
 
-	availWidth := m.width - 2
-	if availWidth < 30 {
-		availWidth = 30
+	// 1. Top Assessment Header
+	decisionText := "DECISION: PENDING"
+	evidenceText := "EVIDENCE: UNVERIFIED"
+	resText := ""
+	covText := "Coverage: n/a"
+	if m.evaluation != nil {
+		decisionText = fmt.Sprintf("DECISION: %s", m.evaluation.OverallDecision)
+		evidenceText = fmt.Sprintf("EVIDENCE: %s", m.evaluation.EvidenceState)
+		if m.evaluation.Resolution != nil && m.evaluation.Resolution.Completeness != "" {
+			resText = fmt.Sprintf(" | RESOLUTION: %s", strings.ToUpper(string(m.evaluation.Resolution.Completeness)))
+		}
+	}
+	if m.result != nil && m.result.Coverage.TotalPackages > 0 {
+		covText = fmt.Sprintf("Coverage: %d/%d", m.result.Coverage.ScannedPackages, m.result.Coverage.TotalPackages)
+	}
+	headerText := fmt.Sprintf("VIGIL / ASSESSMENT | %s | %s%s | %s",
+		decisionText, evidenceText, resText, covText)
+	sections = append(sections, m.styles.Header.Render(truncateRunes(headerText, availWidth)))
+
+	// 2. Navigation Tabs Bar
+	type tabItem struct {
+		tab   ActiveTab
+		label string
+	}
+	tabs := []tabItem{
+		{TabVulnerabilities, "[1] Findings (SCA)"},
+		{TabSecrets, fmt.Sprintf("[2] Secrets (%d)", len(m.secretFindings))},
+		{TabIaC, fmt.Sprintf("[3] IaC (%d)", len(m.iacIssues))},
+		{TabLicenses, fmt.Sprintf("[4] Licences (%d)", len(m.licenseFindings))},
+		{TabDependencyGraph, "[5] Dep Graph"},
+		{TabOverview, "[o] Overview"},
+		{TabEvidence, "[i] Evidence"},
+	}
+	var renderedTabs []string
+	for _, t := range tabs {
+		if t.tab == m.activeTab {
+			renderedTabs = append(renderedTabs, m.styles.ActiveTab.Render(t.label))
+		} else {
+			renderedTabs = append(renderedTabs, m.styles.InactiveTab.Render(t.label))
+		}
+	}
+	sections = append(sections, lipgloss.JoinHorizontal(lipgloss.Top, renderedTabs...))
+
+	// 3. Dedicated Overview or Evidence screens
+	if m.activeTab == TabOverview {
+		sections = append(sections, m.renderOverviewPane(availWidth, bodyHeight))
+		sections = append(sections, m.renderFooter(availWidth))
+		return strings.Join(sections, "\n")
+	}
+	if m.activeTab == TabEvidence {
+		sections = append(sections, m.renderEvidencePane(availWidth, bodyHeight))
+		sections = append(sections, m.renderFooter(availWidth))
+		return strings.Join(sections, "\n")
 	}
 
+	// 4. Filter, Decision Breakdown & Sort Bar
+	countsStr := fmt.Sprintf("Showing: %d", len(m.filteredItems))
+	if m.evaluation != nil && m.activeTab == TabVulnerabilities {
+		countsStr = fmt.Sprintf("BLOCK: %d · REVIEW: %d · ALLOW: %d (Accepted: %d) | Showing: %d",
+			m.evaluation.BlockCount, m.evaluation.ReviewCount, m.evaluation.AllowCount, m.evaluation.SuppressedCount, len(m.filteredItems))
+	}
+	if len(m.markedFixed) > 0 {
+		countsStr += fmt.Sprintf(" | Hidden: %d", len(m.markedFixed))
+	}
+	if m.quickFilter != "" {
+		countsStr += fmt.Sprintf(" | Filter: %s", strings.ToUpper(m.quickFilter))
+	}
+	if m.searchQuery != "" || m.isSearching {
+		countsStr += fmt.Sprintf(" | Search: %q", m.searchQuery)
+	}
+	sections = append(sections, m.styles.FilterBar.Render(truncateRunes(countsStr, availWidth)))
+
+	// 5. Table + Optional Detail Explanation Pane
 	if m.isDetailExpanded {
-		// Show table + detail pane
 		tableHeight := bodyHeight / 2
 		detailHeight := bodyHeight - tableHeight
-
-		tableBox := RenderPaneBorder("󰍜 Security Findings", m.vulnTable.View(), availWidth, tableHeight, true)
-
-		// Combined detail view
-		var detailBuf strings.Builder
-		if m.selectedIdx >= 0 && m.selectedIdx < len(m.filteredItems) {
-			item := m.filteredItems[m.selectedIdx]
-			detailBuf.WriteString(fmt.Sprintf("Package: %s@%s | %s | CVSS: %.1f\n", item.Package, item.Version, RenderSeverityBadge(item.Severity, m.styles), item.CVSS))
-			detailBuf.WriteString(strings.Repeat("─", availWidth-6) + "\n\n")
-			detailBuf.WriteString("Reason: " + item.ReasonFlagged + "\n\n")
-			if len(item.DependencyPath) > 0 {
-				detailBuf.WriteString("Chain: " + strings.Join(item.DependencyPath, " → ") + "\n\n")
-			}
-			detailBuf.WriteString("Description: " + item.Description + "\n\n")
-			detailBuf.WriteString("Fix: " + item.Remediation)
-		} else {
-			detailBuf.WriteString("No item selected")
-		}
-
-		detailBox := RenderPaneBorder("󰈔 Details (Enter to collapse)", detailBuf.String(), availWidth, detailHeight, false)
+		tableBox := RenderPaneBorder("Findings", m.vulnTable.View(), availWidth, tableHeight, true)
+		detailBox := RenderPaneBorder("Selected Finding · Decision & Evidence (Enter / Esc to collapse)", m.renderSelectedDetail(availWidth-6), availWidth, detailHeight, false)
 		sections = append(sections, lipgloss.JoinVertical(lipgloss.Left, tableBox, detailBox))
 	} else {
-		// Show table only (full height)
-		tableBox := RenderPaneBorder("󰍜 Security Findings (Enter to expand details)", m.vulnTable.View(), availWidth, bodyHeight, true)
+		tableBox := RenderPaneBorder("Findings (Enter to inspect decision & provenance)", m.vulnTable.View(), availWidth, bodyHeight, true)
 		sections = append(sections, tableBox)
 	}
 
-	// 5. Status / Footer Bar
 	if m.exportStatus != "" {
-		sections = append(sections, m.styles.KeyHint.Render("󰄬 "+m.exportStatus))
+		sections = append(sections, m.styles.KeyHint.Render(truncateRunes(m.exportStatus, availWidth)))
 	}
-
-	// Build context-aware status bar
-	statusParts := []string{
-		"[↑/↓/h/l] Navigate",
-		"[Enter] Details",
-		"[y] Copy",
-		"[x/X/v] Hide/Restore",
-		"[s] Reveal Secret",
-		"[1-5] Tab",
-		"[C/H/M/L] Filter",
-		"[/] Search",
-		"[e] Export",
-		"[?] Help",
-		"[q] Quit",
-	}
-	footer := m.styles.StatusBar.Render(strings.Join(statusParts, " | "))
-	sections = append(sections, footer)
+	sections = append(sections, m.renderFooter(availWidth))
 
 	return strings.Join(sections, "\n")
 }
 
+func (m *Model) renderSelectedDetail(maxWidth int) string {
+	if m.selectedIdx < 0 || m.selectedIdx >= len(m.filteredItems) {
+		return "No finding selected."
+	}
+	item := m.filteredItems[m.selectedIdx]
+	var b strings.Builder
+
+	riskNote := item.Decision
+	if item.AcceptedRisk {
+		riskNote = "ALLOW (FORMALLY ACCEPTED RISK via policy exception — not proof of safety)"
+	}
+	b.WriteString(fmt.Sprintf("Decision: %s | Severity: %s | CVSS: %.1f\n", riskNote, strings.ToUpper(item.Severity), item.CVSS))
+	b.WriteString(fmt.Sprintf("Component: %s@%s", item.Package, item.Version))
+	if item.PURL != "" {
+		b.WriteString(fmt.Sprintf(" (%s)", item.PURL))
+	}
+	b.WriteString("\n")
+	if item.MatchedRule != "" {
+		b.WriteString(fmt.Sprintf("Matched Policy Rule: %s\n", item.MatchedRule))
+	}
+	if len(item.Aliases) > 0 {
+		b.WriteString(fmt.Sprintf("Aliases: %s\n", strings.Join(item.Aliases, ", ")))
+	}
+	b.WriteString(fmt.Sprintf("Why Flagged: %s\n", item.ReasonFlagged))
+	if len(item.DependencyPath) > 0 {
+		b.WriteString(fmt.Sprintf("Dependency Path: %s\n", strings.Join(item.DependencyPath, " -> ")))
+	}
+	if len(item.MissingEvidence) > 0 {
+		b.WriteString(fmt.Sprintf("Missing Evidence: %s\n", strings.Join(item.MissingEvidence, ", ")))
+	}
+	b.WriteString(fmt.Sprintf("Description: %s\n", truncateRunes(item.Description, maxWidth*2)))
+	b.WriteString(fmt.Sprintf("Action: %s", item.Remediation))
+	return b.String()
+}
+
+func (m *Model) renderFooter(availWidth int) string {
+	if availWidth <= 95 {
+		return m.styles.StatusBar.Render("[↑/↓] Move [Enter] Details [/] Search [f] Filter [s] Sort [g] Group [e] Export [?] Help [q] Quit")
+	}
+	parts := []string{
+		"[↑/↓/j/k] Move",
+		"[Enter] Details",
+		"[/] Search",
+		"[f] Filter",
+		"[s] Sort",
+		"[g] Group",
+		"[x/X/v] Hide/Restore",
+		"[r] Reveal Secret",
+		"[e] Export",
+		"[?] Help",
+		"[q] Quit",
+	}
+	return m.styles.StatusBar.Render(strings.Join(parts, " | "))
+}
+
 func (m *Model) renderExportModal() string {
 	var b strings.Builder
-	b.WriteString(m.styles.Title.Render("󰈔 VIGIL EXPORT REPORT DIALOG") + "\n\n")
+	b.WriteString(m.styles.Title.Render("VIGIL EXPORT REPORT") + "\n\n")
 	b.WriteString("Select export format:\n\n")
-	b.WriteString("  [1] JSON Format (.json)\n")
+	b.WriteString("  [1] JSON Report (.json)\n")
 	b.WriteString("  [2] CSV Spreadsheet (.csv)\n")
 	b.WriteString("  [3] Markdown Report (.md)\n")
 	b.WriteString("  [4] CycloneDX v1.5 SBOM (.cyclonedx.json)\n")
-	b.WriteString("  [5] SPDX v2.3 SBOM (.spdx.json)\n\n")
-	b.WriteString(m.styles.Subtitle.Render("Press [1-5] to export, or [Esc] to cancel"))
+	b.WriteString("  [5] SPDX v2.3 SBOM (.spdx.json)\n")
+	b.WriteString("  [6] SARIF v2.1.0 Report (.sarif.json)\n\n")
+	b.WriteString(m.styles.Subtitle.Render("Press [1-6] to export, or [Esc] to cancel"))
 
 	return m.styles.ModalBox.Render(b.String())
 }
 
 func (m *Model) renderHelp() string {
 	var b strings.Builder
-	b.WriteString(m.styles.Title.Render("󰋗 VIGIL KEYBOARD SHORTCUTS") + "\n\n")
+	b.WriteString(m.styles.Title.Render("VIGIL KEYBOARD SHORTCUTS") + "\n\n")
 
-	b.WriteString(m.styles.Subtitle.Render("Navigation:") + "\n")
-	b.WriteString("  j/k or ↓/↑       Move down/up in table\n")
-	b.WriteString("  h/l              Switch pane left/right (vim style)\n")
-	b.WriteString("  Tab              Cycle through panes\n")
-	b.WriteString("  Enter            Expand/collapse detail view\n\n")
+	b.WriteString(m.styles.Subtitle.Render("Navigation & Views:") + "\n")
+	b.WriteString("  j/k or ↓/↑       Move cursor in active table\n")
+	b.WriteString("  Enter            Expand/collapse full decision & evidence details\n")
+	b.WriteString("  1-5              Switch domain (Findings / Secrets / IaC / Licences / Dep Graph)\n")
+	b.WriteString("  o / i            Assessment Overview / Evidence & Pipeline Stages\n\n")
 
-	b.WriteString(m.styles.Subtitle.Render("Tabs:") + "\n")
-	b.WriteString("  1-5              Switch between tabs (Vulns/Secrets/IaC/Licenses/Graph)\n\n")
-
-	b.WriteString(m.styles.Subtitle.Render("Filtering:") + "\n")
-	b.WriteString("  C/H/M/L          Filter by Critical/High/Medium/Low severity\n")
-	b.WriteString("  a or Esc         Clear all filters\n")
-	b.WriteString("  /                Search (type to filter, Enter to exit)\n\n")
+	b.WriteString(m.styles.Subtitle.Render("Triage, Filtering & Sorting:") + "\n")
+	b.WriteString("  /                Search by package, CVE, PURL, decision, or text\n")
+	b.WriteString("  f                Cycle quick filters (All / BLOCK / REVIEW / KEV / Critical+High)\n")
+	b.WriteString("  s                Cycle sort order (Decision Priority / Severity / CVSS / Component)\n")
+	b.WriteString("  g                Cycle grouping mode (None / Package / Severity / Decision)\n")
+	b.WriteString("  a                Clear all active filters and search\n\n")
 
 	b.WriteString(m.styles.Subtitle.Render("Actions:") + "\n")
-	b.WriteString("  y                Copy CVE ID to clipboard\n")
-	b.WriteString("  x/X              Mark/unmark item as fixed (hide from view)\n")
-	b.WriteString("  g                Cycle grouping mode (None/Package/Severity)\n")
-	b.WriteString("  e                Export report dialog\n")
-	b.WriteString("  w                Maximize/restore window\n\n")
-
-	b.WriteString(m.styles.Subtitle.Render("Other:") + "\n")
-	b.WriteString("  ?                Show this help\n")
-	b.WriteString("  q                Quit\n")
-	b.WriteString("  Ctrl+C           Force quit\n\n")
+	b.WriteString("  y                Copy selected ID to clipboard\n")
+	b.WriteString("  x / v / X        Hide selected finding locally / View hidden / Restore all\n")
+	b.WriteString("  r                Reveal or mask ONLY the currently selected secret\n")
+	b.WriteString("  e                Export report (JSON, CSV, Markdown, CycloneDX, SPDX, SARIF 2.1.0)\n")
+	b.WriteString("  q / Ctrl+C       Quit (cancels active scan)\n\n")
 
 	b.WriteString(m.styles.Subtitle.Render("Press [?], [q], or [Esc] to close"))
-
 	return m.styles.ModalBox.Render(b.String())
 }
 
@@ -1359,6 +1452,7 @@ func groupFindingsByPackage(items []TUIFinding) []TUIFinding {
 		headerFinding := TUIFinding{
 			Key:           "GROUP|PKG|" + pkg,
 			Domain:        "GROUP",
+			Decision:      list[0].Decision,
 			Package:       pkg,
 			ID:            fmt.Sprintf("(%d items)", len(list)),
 			Severity:      list[0].Severity,
@@ -1369,45 +1463,6 @@ func groupFindingsByPackage(items []TUIFinding) []TUIFinding {
 		result = append(result, list...)
 	}
 	return result
-}
-
-// copyToClipboard copies text to system clipboard using platform-specific commands.
-func copyToClipboard(text string) error {
-	var cmd *exec.Cmd
-
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("pbcopy")
-	case "linux":
-		// Try xclip first, fallback to xsel
-		if _, err := exec.LookPath("xclip"); err == nil {
-			cmd = exec.Command("xclip", "-selection", "clipboard")
-		} else if _, err := exec.LookPath("xsel"); err == nil {
-			cmd = exec.Command("xsel", "--clipboard", "--input")
-		} else {
-			return fmt.Errorf("no clipboard tool found (install xclip or xsel)")
-		}
-	case "windows":
-		cmd = exec.Command("clip")
-	default:
-		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
-	}
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return err
-	}
-
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-
-	if _, err := stdin.Write([]byte(text)); err != nil {
-		return err
-	}
-
-	stdin.Close()
-	return cmd.Wait()
 }
 
 func groupFindingsBySeverity(items []TUIFinding) []TUIFinding {
@@ -1427,6 +1482,7 @@ func groupFindingsBySeverity(items []TUIFinding) []TUIFinding {
 			headerFinding := TUIFinding{
 				Key:           "GROUP|SEV|" + sev,
 				Domain:        "GROUP",
+				Decision:      list[0].Decision,
 				Package:       strings.ToUpper(sev),
 				ID:            fmt.Sprintf("(%d items)", len(list)),
 				Severity:      sev,
@@ -1438,4 +1494,69 @@ func groupFindingsBySeverity(items []TUIFinding) []TUIFinding {
 		}
 	}
 	return result
+}
+
+func groupFindingsByDecision(items []TUIFinding) []TUIFinding {
+	groupedMap := make(map[string][]TUIFinding)
+	for _, item := range items {
+		dec := strings.ToUpper(strings.TrimSpace(item.Decision))
+		if dec == "" {
+			dec = "REVIEW"
+		}
+		groupedMap[dec] = append(groupedMap[dec], item)
+	}
+
+	var result []TUIFinding
+	order := []string{"BLOCK", "REVIEW", "ACCEPTED", "ALLOW"}
+	for _, dec := range order {
+		if list, ok := groupedMap[dec]; ok && len(list) > 0 {
+			headerFinding := TUIFinding{
+				Key:           "GROUP|DEC|" + dec,
+				Domain:        "GROUP",
+				Decision:      dec,
+				Package:       dec,
+				ID:            fmt.Sprintf("(%d items)", len(list)),
+				Severity:      list[0].Severity,
+				ReasonFlagged: fmt.Sprintf("Decision group %s", dec),
+				IsGroupHeader: true,
+			}
+			result = append(result, headerFinding)
+			result = append(result, list...)
+		}
+	}
+	return result
+}
+
+func copyToClipboard(text string) error {
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("pbcopy")
+	case "linux":
+		if _, err := exec.LookPath("xclip"); err == nil {
+			cmd = exec.Command("xclip", "-selection", "clipboard")
+		} else if _, err := exec.LookPath("xsel"); err == nil {
+			cmd = exec.Command("xsel", "--clipboard", "--input")
+		} else {
+			return fmt.Errorf("no clipboard tool found (install xclip or xsel)")
+		}
+	case "windows":
+		cmd = exec.Command("clip")
+	default:
+		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if _, err := stdin.Write([]byte(text)); err != nil {
+		return err
+	}
+	stdin.Close()
+	return cmd.Wait()
 }
