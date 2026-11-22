@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-11-22
+
 ### Changed
 
 - **Product Rebrand: Vigil CLI → Angry Turnip (`atnp`) ([ADR-014](documentation/adr/014-rebrand-vigil-to-angry-turnip.md))**

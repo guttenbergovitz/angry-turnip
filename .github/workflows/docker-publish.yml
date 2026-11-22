@@ -125,11 +125,3 @@ jobs:
           done <<< "${{ steps.meta.outputs.tags }}"
           docker buildx imagetools create $TAGS $(printf 'guttenbergovitz/angry-turnip@sha256:%s ' *)
 
-      - name: Sync Docker Hub description from documentation/DOCKERHUB.md
-        uses: peter-evans/dockerhub-description@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: guttenbergovitz/angry-turnip
-          short-description: "Angry Turnip (atnp) - multi-ecosystem security scanner, policy engine, and DevSecOps TUI"
-          readme-filepath: ./documentation/DOCKERHUB.md
