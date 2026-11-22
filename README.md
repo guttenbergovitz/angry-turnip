@@ -92,15 +92,44 @@ Taskfile injects version information at build time. See [Installation Guide](doc
 ### Scan Dependencies
 
 ```bash
-# Scan local project
+# Interactive TUI assessment (default when stdout is a terminal)
 vigil scan .
 
-# Scan remote repository (GitHub, Bitbucket, etc)
+# Non-interactive human summary (no TUI)
+vigil scan . --no-tui
+
+# Machine-readable output on stdout (TUI automatically disabled)
+vigil scan . --output json
+vigil scan . --output sarif
+vigil scan . --output cyclonedx
+vigil scan . --output spdx
+
+# Control scan scope: 'all' (SCA + Secrets + IaC + Licences) or 'sca' (SCA only)
+vigil scan . --scope sca
+vigil scan . --scope all
+
+# Stream plain stage progress lines to stderr (clean stdout for piping/CI)
+vigil scan . --progress plain --no-tui
+
+# Exclude development dependencies or specify an explicit lockfile
+vigil scan . --skip-devdeps --lockfile uv.lock
+
+# Scan remote repository (GitHub, Bitbucket, GitLab)
 vigil scan https://github.com/user/repo
 vigil scan git@github.com:user/repo.git
 ```
 
-Interactive TUI shows real-time progress and vulnerability table.
+#### `vigil scan` CLI Flags
+
+| Flag | Values / Default | Description |
+|------|------------------|-------------|
+| `--no-tui` | `false` | Disable interactive Bubble Tea TUI and print human summary |
+| `--output <fmt>` | `json`, `sarif`, `csv`, `markdown`, `cyclonedx`, `spdx` | Emit machine-readable report to `stdout` (auto-disables TUI) |
+| `--scope <mode>` | `all` (default), `sca` | `all` runs SCA, Secrets, IaC, and Licences; `sca` runs dependency vulnerability scanning only |
+| `--progress <mode>` | `auto` (default), `plain`, `none` | `plain` streams stage completion events to `stderr`; `none` suppresses progress output |
+| `--skip-devdeps` | `false` | Exclude development/test dependencies from scan scope |
+| `--lockfile <name>` | auto-detected | Explicitly select lockfile or manifest (e.g. `uv.lock`, `poetry.lock`, `pom.xml`) |
+| `--secrets` | `false` | Print masked secret scan findings in CLI summary mode |
 
 **Remote scanning:**
 - Clones repository to temp directory

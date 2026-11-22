@@ -18,10 +18,13 @@ vigil scan [path] [flags]
 
 ### Flags
 
+- `--no-tui` - Disable interactive TUI (print human-readable CLI summary)
+- `--output <format>` - Emit machine-readable output on `stdout` (`json`, `sarif`, `csv`, `markdown`, `cyclonedx`, `spdx`; automatically disables TUI)
+- `--scope <mode>` - Scan scope: `all` (default: SCA, Secrets, IaC, Licences) or `sca` (SCA dependency scan only)
+- `--progress <mode>` - Progress mode: `auto` (default), `plain` (stream stage completion lines to `stderr`), or `none`
 - `--skip-devdeps` - Skip development dependencies
-- `--output <format>` - Save results (json, csv, markdown, cyclonedx, spdx)
 - `--lockfile <filename>` - Explicitly specify lockfile name (e.g. `uv.lock`, `requirements.txt`, `Cargo.lock`)
-- `--secrets` - Scan codebase for hardcoded credentials, API keys, and private SSH keys
+- `--secrets` - Print masked secret findings in CLI text mode (secrets are always masked by default)
 
 ### Behaviour
 
